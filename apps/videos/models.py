@@ -1,6 +1,6 @@
 # Amara, universalsubtitles.org
 #
-# Copyright (C) 2013 Participatory Culture Foundation
+# Copyright (C) 2012 Participatory Culture Foundation
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
@@ -19,6 +19,7 @@
 import logging
 logger = logging.getLogger("videos-models")
 
+from time import strftime
 import string
 import random
 from datetime import datetime, date, timedelta
@@ -65,6 +66,7 @@ VIDEO_TYPE_GOOGLE = 'G'
 VIDEO_TYPE_FORA = 'F'
 VIDEO_TYPE_USTREAM = 'U'
 VIDEO_TYPE_VIMEO = 'V'
+VIDEO_TYPE_WISTIA = 'W'
 VIDEO_TYPE_DAILYMOTION = 'D'
 VIDEO_TYPE_FLV = 'L'
 VIDEO_TYPE_BRIGHTCOVE = 'C'
@@ -77,6 +79,7 @@ VIDEO_TYPE = (
     (VIDEO_TYPE_FORA, 'Fora.tv'),
     (VIDEO_TYPE_USTREAM, 'Ustream.tv'),
     (VIDEO_TYPE_VIMEO, 'Vimeo.com'),
+    (VIDEO_TYPE_WISTIA, 'Wistia.com'),
     (VIDEO_TYPE_DAILYMOTION, 'dailymotion.com'),
     (VIDEO_TYPE_FLV, 'FLV'),
     (VIDEO_TYPE_BRIGHTCOVE, 'brightcove.com'),
@@ -401,7 +404,9 @@ class Video(models.Model):
 
     @classmethod
     def get_or_create_for_url(cls, video_url=None, vt=None, user=None, timestamp=None):
+
         assert video_url or vt, 'should be video URL or VideoType'
+
         from types.base import VideoTypeError
 
         try:
@@ -409,8 +414,10 @@ class Video(models.Model):
         except VideoTypeError:
             return None, False
 
+
         if not vt:
             return None, False
+
 
         try:
             video_url_obj = VideoUrl.objects.get(
@@ -418,6 +425,7 @@ class Video(models.Model):
             video, created = video_url_obj.video, False
         except models.ObjectDoesNotExist:
             video, created = None, False
+
 
         if not video:
             try:
@@ -460,6 +468,7 @@ class Video(models.Model):
                 obj.update_search_index()
                 video, created = obj, True
 
+
         if timestamp and video_url_obj.created != timestamp:
            video_url_obj.created = timestamp
            video_url_obj.save(updates_timestamp=False)
@@ -468,6 +477,7 @@ class Video(models.Model):
             if hasattr(vt, 'username'):
                 video_url_obj.owner_username = vt.username
                 video_url_obj.save()
+
         return video, created
 
     @property
@@ -1182,11 +1192,6 @@ class SubtitleLanguage(models.Model):
         self.save()
 
     def save(self, updates_timestamp=True, *args, **kwargs):
-        if 'tern_sync' not in kwargs:
-            self.needs_sync = True
-        else:
-            kwargs.pop('tern_sync')
-
         if updates_timestamp:
             self.created = datetime.now()
         if self.language:
@@ -1394,12 +1399,7 @@ class SubtitleVersion(SubtitleCollection):
     def __unicode__(self):
         return u'%s #%s' % (self.language, self.version_no)
 
-    def save(self, *args, **kwargs):
-        if 'tern_sync' not in kwargs:
-            self.needs_sync = True
-        else:
-            kwargs.pop('tern_sync')
-
+    def save(self,  *args, **kwargs):
         created = not self.pk
         super(SubtitleVersion, self).save(*args, **kwargs)
         if created:

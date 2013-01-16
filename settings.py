@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # Amara, universalsubtitles.org
 # 
-# Copyright (C) 2013 Participatory Culture Foundation
+# Copyright (C) 2012 Participatory Culture Foundation
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
@@ -51,6 +51,7 @@ METADATA_LANGUAGES = (
 
 DEBUG = True
 TEMPLATE_DEBUG = DEBUG
+
 
 PISTON_EMAIL_ERRORS = True
 PISTON_DISPLAY_ERRORS = False
@@ -136,6 +137,8 @@ JS_CORE = \
      'js/player/vimeovideoplayer.js',
      'js/player/dailymotionvideosource.js',
      'js/player/dailymotionvideoplayer.js',
+     'js/player/wistiavideosource.js',
+     'js/player/wistiavideoplayer.js',
      'js/startdialog/model.js',
      'js/startdialog/videolanguage.js',
      'js/startdialog/videolanguages.js',
@@ -398,7 +401,6 @@ INSTALLED_APPS = (
     'videos',
     'widget',
     'subtitles',
-    'django_nose', 
 )
 
 # Celery settings
@@ -864,7 +866,7 @@ LOGGING = {
 try:
     import debug_toolbar
 
-    EVERYONE_CAN_DEBUG = False
+    EVERYONE_CAN_DEBUG = True
     INSTALLED_APPS += ('debug_toolbar',)
     MIDDLEWARE_CLASSES += ('debug_toolbar.middleware.DebugToolbarMiddleware',)
 

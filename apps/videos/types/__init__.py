@@ -1,6 +1,6 @@
 # Amara, universalsubtitles.org
 # 
-# Copyright (C) 2013 Participatory Culture Foundation
+# Copyright (C) 2012 Participatory Culture Foundation
 # 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
@@ -17,9 +17,11 @@
 # http://www.gnu.org/licenses/agpl-3.0.html.
 from base import VideoTypeRegistrar, VideoTypeError
 from youtube import YoutubeVideoType
+from wistia import WistiaVideoType
 from bliptv import BlipTvVideoType
 from htmlfive import HtmlFiveVideoType
 from dailymotion import DailymotionVideoType
+from wistia import WistiaVideoType
 from vimeo import VimeoVideoType
 from flv import FLVVideoType
 from brigthcove import BrightcoveVideoType
@@ -31,6 +33,7 @@ video_type_registrar.register(BlipTvVideoType)
 video_type_registrar.register(HtmlFiveVideoType)
 video_type_registrar.register(DailymotionVideoType)
 video_type_registrar.register(VimeoVideoType)
+video_type_registrar.register(WistiaVideoType)
 video_type_registrar.register(FLVVideoType)
 video_type_registrar.register(BrightcoveVideoType)
 video_type_registrar.register(Mp3VideoType)
