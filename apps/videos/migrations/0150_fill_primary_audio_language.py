@@ -32,21 +32,28 @@ class Migration(DataMigration):
 
     def forwards(self, orm):
         "Write your forwards methods here."
-        for video in chunkediter(orm.Video.objects.all()):
-            video.primary_audio_language = language(video)
-            video.save()
+        if not db.dry_run:
+            total = orm.Video.objects.count()
+            i = 0
+            for video in chunkediter(orm.Video.objects.all()):
+                if i % 100 == 0:
+                    print '%d/%d' % (i, total)
+                video.primary_audio_language = language(video)
+                video.save()
+                i += 1
 
 
     def backwards(self, orm):
         "Write your backwards methods here."
-        for video in chunkediter(orm.Video.objects.all()):
-            try:
-                sl = orm.SubtitleLanguage.objects.get(
-                    video=video, language=video.primary_audio_language)
-                sl.is_original = True
-                sl.save()
-            except models.ObjectDoesNotExist:
-                pass
+        if not db.dry_run:
+            for video in chunkediter(orm.Video.objects.all()):
+                try:
+                    sl = orm.SubtitleLanguage.objects.get(
+                        video=video, language=video.primary_audio_language)
+                    sl.is_original = True
+                    sl.save()
+                except models.ObjectDoesNotExist:
+                    pass
   
     models = {
         'accountlinker.thirdpartyaccount': {

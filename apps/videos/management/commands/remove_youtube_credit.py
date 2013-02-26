@@ -75,6 +75,8 @@ class Command(BaseCommand):
             default=None),
         make_option('--query', '-q', dest='query', type="str",
             default=None),
+        make_option('--youtube', '-u', dest='youtube_username', type="str",
+            default=None),
     )
 
     CACHE_PATH = os.path.join(getattr(settings, 'PROJECT_ROOT'), 'yt-cache')
@@ -226,7 +228,7 @@ class Command(BaseCommand):
 
         return VideoUrl.objects.select_related('video').filter(url__in=urls)
 
-    def handle(self, video_id, team, query, *args, **kwargs):
+    def handle(self, video_id, team, query, youtube_username, *args, **kwargs):
         if video_id:
             try:
                 video = Video.objects.get(video_id=video_id)
@@ -255,6 +257,10 @@ class Command(BaseCommand):
             if query:
                 urls = self._get_videos_from_query(query)
                 videos = [u.video for u in urls]
+            elif youtube_username:
+                urls = VideoUrl.objects.select_related('video').filter(
+                        owner_username=youtube_username)
+                videos = [vurl.video for vurl in urls]
             else:
 
                 all_team_videos = Video.objects.filter(teamvideo__isnull=False)
