@@ -20,7 +20,7 @@
 
     var root = this;
 
-    var ModalController = function($scope, SubtitleStorage) {
+    var ModalController = function($scope, SubtitleListFinder, SubtitleStorage) {
         /**
          * Responsible for handling the various states of the modal.
          * @param $scope
@@ -31,28 +31,37 @@
         $scope.loading = false;
         $scope.content = null;
 
-        $scope.hide = function($event) {
+        $scope.hide = function() {
             $scope.content = null;
             $scope.loading = null;
-            $event.preventDefault();
         };
 
         $scope.$root.$on('hide-modal', function($event) {
-            $scope.hide($event);
+            $scope.hide();
         });
         $scope.$root.$on('show-loading-modal', function($event, content) {
 
             // Clear out any existing modal.
-            $scope.hide($event);
+            $scope.hide();
 
             $scope.loading = content;
         });
         $scope.$root.$on('show-modal', function($event, content) {
 
             // Clear out any existing modal.
-            $scope.hide($event);
+            $scope.hide();
 
             $scope.content = content;
+        });
+        $scope.$root.$on('show-modal-download', function($event) {
+
+            $scope.content.dfxpString = SubtitleListFinder.get('working-subtitle-set').scope.parser.xmlToString(true, true);
+
+        });
+        $scope.$root.$on('change-modal-heading', function($event, heading) {
+            if ($scope.content) {
+                $scope.content.heading = heading;
+            }
         });
 
     };

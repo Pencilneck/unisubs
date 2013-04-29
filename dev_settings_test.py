@@ -46,6 +46,10 @@ PASSWORD_HASHERS = (
 
 import logging
 logging.getLogger('pysolr').setLevel(logging.ERROR)
+logging.getLogger('requests').setLevel(logging.ERROR)
+logging.getLogger('http').setLevel(logging.ERROR)
+logging.disable(logging.INFO)
+logging.disable(logging.DEBUG)
 
 try:
     from dev_settings_test_local import *

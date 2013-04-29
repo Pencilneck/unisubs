@@ -85,6 +85,30 @@ class TestTranslationShims(TestCase):
 
         self.assertTrue(subtitlelanguage_is_translation(self.sl_de))
 
+        # Deleting the *source* of a translation shouldn't change the fact that
+        # a language is a translation.
+
+        # en fr de
+        #       2
+        #      /|
+        #     / 1
+        #    X
+        #  2 |
+        #  | 1
+        #  |/
+        #  1 
+        f2.visibility_override = 'deleted'
+        f2.save()
+
+        self.assertTrue(subtitlelanguage_is_translation(self.sl_de))
+
+        # But deleting the version that makes a language a translation should.
+        # I think.  This is really hard.
+        d2.visibility_override = 'deleted'
+        d2.save()
+
+        self.assertFalse(subtitlelanguage_is_translation(self.sl_de))
+
         # Shut up, Pyflakes.
         assert e1 and f1 and e2 and f2 and d1 and d2
 

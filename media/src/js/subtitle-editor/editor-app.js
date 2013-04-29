@@ -24,7 +24,10 @@
 
     module = angular.module('amara.SubtitleEditor', [
         'amara.SubtitleEditor.services',
+        'amara.SubtitleEditor.services.lock',
         'amara.SubtitleEditor.directives',
+        'amara.SubtitleEditor.filters',
+        'ngCookies'
     ]);
 
     // instead of using {{ }} for variables, use [[ ]]

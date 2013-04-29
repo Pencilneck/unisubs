@@ -34,6 +34,7 @@
 # # https://en.wikipedia.org/wiki/Arctic_Tern
 
 import datetime
+import time
 import csv as csv_module
 import os, sys
 import random
@@ -41,6 +42,7 @@ import re
 import warnings
 from optparse import OptionGroup, OptionParser
 
+from babelsubs.storage import SubtitleSet
 
 csv = csv_module.writer(sys.stdout)
 single = False
@@ -201,13 +203,17 @@ def markup_to_dfxp(text):
     #
     # gets turned into:
     #
-    #     x &lt; <span tts:textDecoration="underline">10</span>
-    text = BOLD_RE_INNER.sub(r'<span tts:fontWeight="bold">\1</span>', text)
-    text = BOLD_RE_OUTER.sub(r'<span tts:fontWeight="bold">\1</span>', text)
-    text = ITALIC_RE_INNER.sub(r'<span tts:fontStyle="italic">\1</span>', text)
-    text = ITALIC_RE_OUTER.sub(r'<span tts:fontStyle="italic">\1</span>', text)
-    text = UNDER_RE_INNER.sub(r'<span tts:textDecoration="underline">\1</span>', text)
-    text = UNDER_RE_OUTER.sub(r'<span tts:textDecoration="underline">\1</span>', text)
+    #     x &lt; <span textDecoration="underline">10</span>
+    #
+    # Even though we should be using tts:[attr-name] the way etree works
+    # makes it hard to set namespaces there, so we don't set them here
+    # they'll be set on babelsubs properly.
+    text = BOLD_RE_INNER.sub(r'<span fontWeight="bold">\1</span>', text)
+    text = BOLD_RE_OUTER.sub(r'<span fontWeight="bold">\1</span>', text)
+    text = ITALIC_RE_INNER.sub(r'<span fontStyle="italic">\1</span>', text)
+    text = ITALIC_RE_OUTER.sub(r'<span fontStyle="italic">\1</span>', text)
+    text = UNDER_RE_INNER.sub(r'<span textDecoration="underline">\1</span>', text)
+    text = UNDER_RE_OUTER.sub(r'<span textDecoration="underline">\1</span>', text)
 
     return text
 
@@ -349,8 +355,11 @@ def _stack_version(sv, nsl):
 
     try:
         subtitles = list(subtitles)
+        # set subtitle set as the pipeline will pass escaping
+        # otherwise and it will break
+        sset = SubtitleSet.from_list(nsl.language_code, subtitles)
         nsv = pipeline.add_subtitles(
-            nsl.video, nsl.language_code, subtitles,
+            nsl.video, nsl.language_code, sset,
             title=sv.title, description=sv.description, parents=[],
             visibility=visibility, author=sv.user,
             created=sv.datetime_started)
@@ -867,6 +876,10 @@ def build_option_parser():
                  help='django settings module to use',
                  metavar='MODULE_NAME')
 
+    p.add_option('-S', '--sleep', default=None,
+                 help='sleep for N milliseconds before starting',
+                 metavar='N')
+
     g = OptionGroup(p, "Commands")
 
     g.add_option('-C', '--count', dest='command', default=None,
@@ -908,6 +921,17 @@ def main():
 
     setup_path()
     setup_settings(options)
+
+    if options.sleep:
+        ms = int(options.sleep)
+
+        print 'Sleeping for %dms...' % ms
+        sys.stdout.flush()
+
+        time.sleep(ms / 1000.0)
+
+        print 'Waking up...'
+        sys.stdout.flush()
 
     if options.command == 'count':
         count()

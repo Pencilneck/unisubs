@@ -20,5 +20,7 @@ from django.conf.urls.defaults import url, patterns
 
 
 urlpatterns = patterns('subtitles.views',
-    url(r'^editor/(?P<video_id>[\w]+)/(?P<language_code>[\w-]+)/(?P<task_id>[\d]+/?)?$', 'subtitle_editor', name='subtitle-editor'),
+    url(r'^editor/(?P<video_id>[\w]+)/(?P<language_code>[\w-]+)/(?P<task_id>[\d]+)?/??$', 'subtitle_editor', name='subtitle-editor'),
+    url(r'^editor/(?P<video_id>[\w]+)/(?P<language_code>[\w-]+)/regain', 'regain_lock', name='regain_lock'),
+    url(r'^editor/(?P<video_id>[\w]+)/(?P<language_code>[\w-]+)/release', 'release_lock', name='release_lock'),
 )

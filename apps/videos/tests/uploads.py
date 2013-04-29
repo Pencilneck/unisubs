@@ -79,12 +79,12 @@ class UploadSubtitlesTest(WebUseTest):
 
 
     def _assertVersionCount(self, video, n):
-        self.assertEqual(video.newsubtitleversion_set.count(), n)
+        self.assertEqual(video.newsubtitleversion_set.full().count(), n)
 
 
     def _assertCounts(self, video, counts):
         self.assertEqual(
-            counts, dict([(sl.language_code, sl.subtitleversion_set.count())
+            counts, dict([(sl.language_code, sl.subtitleversion_set.full().count())
                             for sl in video.newsubtitlelanguage_set.all()]))
 
 
@@ -113,7 +113,7 @@ class UploadSubtitlesTest(WebUseTest):
         # Ensure that the subtitles actually got uploaded too.
         sl_en = video.subtitle_language()
         self.assertIsNotNone(sl_en)
-        self.assertEqual(sl_en.subtitleversion_set.count(), 1)
+        self.assertEqual(sl_en.subtitleversion_set.full().count(), 1)
 
         en1 = sl_en.get_tip()
         subtitles = en1.get_subtitles()
@@ -135,7 +135,7 @@ class UploadSubtitlesTest(WebUseTest):
         video = refresh(video)
         sl_en = refresh(sl_en)
 
-        self.assertEqual(sl_en.subtitleversion_set.count(), 2)
+        self.assertEqual(sl_en.subtitleversion_set.full().count(), 2)
 
     def test_upload_subtitles_non_primary_language(self):
         # Start with a fresh video.
@@ -165,7 +165,7 @@ class UploadSubtitlesTest(WebUseTest):
         # Ensure that the subtitles actually got uploaded too.
         sl_fr = video.subtitle_language('fr')
         self.assertIsNotNone(sl_fr)
-        self.assertEqual(sl_fr.subtitleversion_set.count(), 1)
+        self.assertEqual(sl_fr.subtitleversion_set.full().count(), 1)
 
         fr1 = sl_fr.get_tip()
         subtitles = fr1.get_subtitles()
@@ -193,7 +193,7 @@ class UploadSubtitlesTest(WebUseTest):
         self.assertIsNone(video.get_primary_audio_subtitle_language())
         self.assertIsNotNone(video.complete_date)
         self.assertTrue(sl_fr.subtitles_complete)
-        self.assertEqual(sl_fr.subtitleversion_set.count(), 2)
+        self.assertEqual(sl_fr.subtitleversion_set.full().count(), 2)
 
     def test_upload_respects_lock(self):
         user1 = get_user(1)
@@ -216,17 +216,17 @@ class UploadSubtitlesTest(WebUseTest):
         # view is terrible and always returns a 200 with a horrible mix of HTML
         # and JSON as a response.  So instead we'll just make sure that the
         # subtitles were not actually created.
-        self.assertFalse(sl_en.subtitleversion_set.exists())
+        self.assertFalse(sl_en.subtitleversion_set.full().exists())
 
         # User 1 has the writelock, so uploading subtitles should work for them.
         self._login(user1)
         self._upload(video, 'en', 'en', None, True, 'test.srt')
-        self.assertEqual(sl_en.subtitleversion_set.count(), 1)
+        self.assertEqual(sl_en.subtitleversion_set.full().count(), 1)
 
         # User 1 still has the writelock, so user 2 still can't upload.
         self._login(user2)
         self._upload(video, 'en', 'en', None, True, 'test.srt')
-        self.assertEqual(sl_en.subtitleversion_set.count(), 1)
+        self.assertEqual(sl_en.subtitleversion_set.full().count(), 1)
 
         # Release the writelock.
         sl_en.release_writelock()
@@ -234,7 +234,7 @@ class UploadSubtitlesTest(WebUseTest):
         # Now user 2 can finally upload their subtitles.
         self._login(user2)
         self._upload(video, 'en', 'en', None, True, 'test.srt')
-        self.assertEqual(sl_en.subtitleversion_set.count(), 2)
+        self.assertEqual(sl_en.subtitleversion_set.full().count(), 2)
 
     def test_upload_unsynced_subs(self):
         video = get_video()
@@ -330,7 +330,7 @@ class UploadSubtitlesTest(WebUseTest):
         # Uploading a translation with a different number of subs than the
         # original language is not allowed.
         self._upload(video, 'is', 'en', 'en', True, 'test_fewer_subs.srt')
-        self.assertEqual(video.newsubtitlelanguage_set.count(), 1)
+        self.assertEqual(video.newsubtitlelanguage_set.count(), 2)
 
         self._upload(video, 'is', 'en', 'en', True, 'test.srt')
         self.assertEqual(video.newsubtitlelanguage_set.count(), 2)

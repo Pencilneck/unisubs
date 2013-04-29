@@ -21,7 +21,7 @@ logger = logging.getLogger("videos-models")
 
 import string
 import random
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 import time
 
 from django.utils.safestring import mark_safe
@@ -42,7 +42,6 @@ from auth.models import CustomUser as User, Awards
 from videos.types import video_type_registrar
 from videos.feed_parser import FeedParser
 from comments.models import Comment
-from libs.bulkops import insert_many
 from statistic import st_widget_view_statistic
 from statistic.tasks import st_sub_fetch_handler_update, st_video_view_handler_update
 from widget import video_cache
@@ -50,9 +49,7 @@ from utils.redis_utils import RedisSimpleField
 from utils.amazon import S3EnabledImageField
 from utils.panslugify import pan_slugify
 
-from apps.teams.moderation_const import (
-    WAITING_MODERATION, APPROVED, MODERATION_STATUSES, UNMODERATED, REJECTED
-)
+from apps.teams.moderation_const import MODERATION_STATUSES, UNMODERATED
 from raven.contrib.django.models import client
 from babelsubs import storage
 
@@ -400,6 +397,10 @@ class Video(models.Model):
         vurl = self.get_primary_videourl_obj()
         return vurl.effective_url if vurl else None
 
+    def get_video_urls(self):
+        """Return the video URLs for this video."""
+        return self.videourl_set.all()
+
     @classmethod
     def get_or_create_for_url(cls, video_url=None, vt=None, user=None, timestamp=None, fetch_subs_async=True):
         assert video_url or vt, 'should be video URL or VideoType'
@@ -490,10 +491,8 @@ class Video(models.Model):
         Will return None if unknown.
 
         """
-        ol = self._original_subtitle_language()
+        return self.primary_audio_language_code or None
 
-        if ol and ol.language_code:
-            return ol.language_code
 
     @property
     def filename(self):
@@ -505,7 +504,7 @@ class Video(models.Model):
         """
         from django.utils.text import get_valid_filename
 
-        return get_valid_filename(self.__unicode__())
+        return get_valid_filename(self.title_display(truncate=False))
 
     def lang_filename(self, language):
         """Return a filename-safe version of this video's string representation with a language code.
@@ -590,7 +589,7 @@ class Video(models.Model):
 
     def subtitle_languages(self, language_code):
         """Return all SubtitleLanguages for this video with the given language code."""
-        return self.subtitlelanguage_set.filter(language=language_code)
+        return self.newsubtitlelanguage_set.filter(language_code=language_code)
 
     def version(self, version_number=None, language=None, public_only=True):
         """Return the SubtitleVersion for this video matching the given criteria.
@@ -627,9 +626,19 @@ class Video(models.Model):
 
         If no version fitting all the criteria is found, None is returned.
 
+        Deleted versions cannot be retrieved with this method.  If you need
+        those you'll need to look them up another way.
+
         """
         language = self.subtitle_language(language_code)
         return None if language is None else language.get_tip(public=public_only)
+
+    def has_public_version(self):
+        """Check if there are any public versions for any language."""
+        for language in self.newsubtitlelanguage_set.all():
+            if language.has_public_version():
+                return True
+        return False
 
     def subtitles(self, version_number=None, language_code=None, language_pk=None):
         if language_pk is None:
@@ -655,8 +664,8 @@ class Video(models.Model):
     def translation_language_codes(self):
         """All iso language codes with finished translations."""
         return set([sl.language for sl
-                    in self.subtitlelanguage_set.filter(
-                    is_complete=True).filter(is_original=False)])
+                    in self.newsubtitlelanguage_set.filter(
+                    subtitles_complete=True).filter(is_forked=False)])
 
     @property
     def writelock_owner_name(self):
@@ -709,7 +718,7 @@ class Video(models.Model):
 
     def notification_list_all(self, exclude=None):
         users = []
-        for language in self.subtitlelanguage_set.all():
+        for language in self.newsubtitlelanguage_set.all():
             for u in language.notification_list(exclude):
                 if not u in users:
                     users.append(u)
@@ -720,13 +729,13 @@ class Video(models.Model):
 
     def subtitle_language_dict(self):
         langs = {}
-        for sl in self.subtitlelanguage_set.all():
+        for sl in self.newsubtitlelanguage_set.all():
             if not sl.language:
                 continue
             if sl.language in langs:
-                langs[sl.language].append(sl)
+                langs[sl.language_code].append(sl)
             else:
-                langs[sl.language] = [sl]
+                langs[sl.language_code] = [sl]
         return langs
 
     @property
@@ -767,7 +776,16 @@ class Video(models.Model):
 
     @property
     def is_moderated(self):
-        return bool(self.moderated_by_id)
+        '''
+        Delegates check to team.moderates_video to keep logic in one place.
+        This is cached because the widget uses it, and else we'll incurr on
+        extra db calls on each widget view.
+        '''
+        cached_attr_name = '_cache_is_moderated'
+        if not hasattr(self, cached_attr_name):
+            tv = self.get_team_video()
+            setattr(self, cached_attr_name,  tv and tv.team.moderates_videos())
+        return cached_attr_name
 
     def metadata(self):
         '''Return a dict of metadata for this video.
@@ -932,126 +950,19 @@ class SubtitleLanguage(models.Model):
 
     subtitles_fetched_counter = RedisSimpleField()
 
-    class Meta:
-        unique_together = (('video', 'language', 'standard_language'),)
 
-    def __unicode__(self):
-        return self.language_display()
-
-
-    def nonblank_subtitle_count(self, public_only=False):
-        return len([s for s in self.latest_subtitles(public_only=public_only)
-                    if s.text.strip()])
-
-
-    def get_title(self, public_only=True):
-        """Return the title for this language.
-
-        Tries to use the following (in order):
-
-        * The latest version's title.
-        * The video's title.
-
-        """
-        v = self.latest_version(public_only=public_only)
-
-        if v:
-            title = v.title
-        elif self.standard_language:
-            title = self.standard_language.get_title()
+    def save(self, updates_timestamp=True, *args, **kwargs):
+        if 'tern_sync' not in kwargs:
+            self.needs_sync = True
         else:
-            title = self.video.title
+            kwargs.pop('tern_sync')
 
-        return title
-
-    def get_title_display(self):
-        """Return a suitable title to display to a user for this language.
-
-        This will use the most specific title if it's present, but if it's blank
-        it will fall back to the less-specific-but-at-least-it-exists video
-        title instead.
-
-        """
-        return self.get_title() or self.video.title
-
-    def get_description(self, public_only=True):
-        """Return the description for this language.
-
-        Tries to use the following (in order):
-
-        * The latest version's description.
-        * The video's description.
-
-        """
-        v = self.latest_version(public_only=public_only)
-
-        if v:
-            description = v.description
-        elif self.standard_language:
-            description = self.standard_language.get_description()
-        else:
-            description = self.video.description
-
-        return description
-
-    def get_description_display(self):
-        """Return a suitable description to display to a user for this language.
-
-        This will use the most specific description if it's present, but if it's
-        blank it will fall back to the less-specific-but-at-least-it-exists
-        video description instead.
-
-        """
-        return self.get_description() or self.video.description
-
-
-    def is_dependent(self):
-        """
-        AKA is this language a translation? Stand alone languages must
-        either be an original one, or a forked one.
-        """
-        return not self.is_original and not self.is_forked
-
-    def is_complete_and_synced(self, public_only=True):
-        """
-        For transcripts, this means the user marked it as completed.
-        For translations, the original language must be marked as completed.
-
-        We consider a set of subs where the very last has no end time
-        to be synced, as that is a convention for 'until end of time'.
-        """
-        # FIXME: remove this after DRM is done
-        MAX_SUB_TIME = (60 * 60 * 100 * 1000) - 1000
-        def is_synced_value(v):
-            return v != -1 and v != None and v < MAX_SUB_TIME
-        if not self.is_dependent() and not self.is_complete:
-            return False
-        if self.is_dependent():
-            if self.percent_done != 100:
-                return False
-            standard_lang = self.standard_language
-            if not standard_lang or not standard_lang.is_complete:
-                return False
-        subtitles = self.latest_subtitles(public_only=public_only)
-        if len(subtitles) == 0:
-
-            return False
-        if len([s for s in subtitles[:-1] if not s.has_complete_timing()]) > 0:
-            return False
-        if not is_synced_value(subtitles[-1].start_time):
-            return False
-        return True
-
-    @models.permalink
-    def get_absolute_url(self):
-        return ('videos:translation_history',
-                [self.video.video_id, self.language or 'unknown', self.pk])
-
-    def language_display(self):
-        if self.is_original and not self.language:
-            return 'Original'
-        return self.get_language_display()
-
+        if updates_timestamp:
+            self.created = datetime.now()
+        if self.language:
+            assert self.language in VALID_LANGUAGE_CODES, \
+                "Subtitle Language %s should be a valid code." % self.language
+        super(SubtitleLanguage, self).save(*args, **kwargs)
     @property
     def writelock_owner_name(self):
         if self.writelock_owner == None:
@@ -1067,322 +978,38 @@ class SubtitleLanguage(models.Model):
         seconds = delta.days * 24 * 60 * 60 + delta.seconds
         return seconds < WRITELOCK_EXPIRATION
 
-    def is_rtl(self):
-        from utils.translation import is_rtl
-        return is_rtl(self.language)
-
     def can_writelock(self, request):
         return self.writelock_session_key == \
-            request.browser_id or \
-            not self.is_writelocked
+               request.browser_id or \
+        not self.is_writelocked
+
 
     def writelock(self, request):
         if request.user.is_authenticated():
             self.writelock_owner = request.user
         else:
             self.writelock_owner = None
-        self.writelock_session_key = request.browser_id
-        self.writelock_time = datetime.now()
+            self.writelock_session_key = request.browser_id
+            self.writelock_time = datetime.now()
 
     def release_writelock(self):
         self.writelock_owner = None
         self.writelock_session_key = ''
         self.writelock_time = None
-
-    def _filter_public(self, versions, public_only):
-        if public_only:
-            versions = versions.filter(moderation_status__in=[APPROVED, UNMODERATED])
-        return versions
-
-    def version(self, version_number=None, public_only=True):
-        if version_number is None:
-            return self.latest_version(public_only)
-
-        try:
-            if public_only:
-                versions = self.newsubtitleversion_set.public()
-            else:
-                versions = self.newsubtitleversion_set.all()
-
-            return versions.filter(version_number=version_number)[:1].get()
-        except (models.ObjectDoesNotExist, IndexError):
-            return None
-
-    @property
-    def last_version(self):
-        return self.latest_version(public_only=True)
-
-    def latest_version(self, public_only=True):
-        try:
-            return self._filter_public(self.subtitleversion_set.all(), public_only)[0]
-        except (SubtitleVersion.DoesNotExist, IndexError):
-            return None
-
-    def latest_subtitles(self, public_only=True):
-        version = self.latest_version(public_only=public_only)
-        if version:
-            return version.subtitles(public_only=public_only)
-        return []
-
-    def notification_list(self, exclude=None):
-        qs = self.followers.filter(notify_by_email=True, is_active=True)
-
-        if exclude:
-            if not isinstance(exclude, (list, tuple)):
-                exclude = [exclude]
-            qs = qs.exclude(pk__in=[u.pk for u in exclude if u])
-        return qs
-
-    def translations(self):
-        return SubtitleLanguage.objects.filter(video=self.video, languge_code=self.video.primary_audio_language_code)
-
-    def fork(self, from_version=None, user=None, result_of_rollback=False,
-             attach_to_language=None, bypass_writelock=False):
-        """
-        If this a dependent language, fork it, making all it's subs
-        timing not depend on the original source.
-        If locked, will throw an AlreadyEditingException
-        unless you pass bypass_writelock.
-        If attach_to_language is passed, we will copy those
-        subs to a new language, else self will be used
-        """
-        to_language = attach_to_language or self
-        if from_version:
-            original_subs = from_version.subtitle_set.all()
-        else:
-            if self.standard_language is None:
-                return
-            original_subs = self.standard_language.latest_version().subtitle_set.all()
-
-        if self.is_writelocked and not bypass_writelock:
-            raise AlreadyEditingException(_("Sorry, you cannot upload subtitles right now because someone is editing the language you are uploading or a translation of it"))
-        try:
-            old_version = self.subtitleversion_set.all()[:1].get()
-            version_no = old_version.version_no + 1
-        except SubtitleVersion.DoesNotExist:
-            old_version = None
-            version_no = 0
-
-        kwargs = dict(
-            language=to_language, version_no=version_no,
-            datetime_started=datetime.now(),
-            note=u'Uploaded', is_forked=True, time_change=1,
-            text_change=1, result_of_rollback=result_of_rollback,
-            forked_from=from_version)
-        if user:
-            kwargs['user'] = user
-        version = SubtitleVersion(**kwargs)
-        version.save()
-
-        if old_version:
-            original_sub_dict = dict([(s.subtitle_id, s) for s  in original_subs])
-            my_subs = old_version.subtitle_set.all()
-            for sub in my_subs:
-                if sub.subtitle_id in original_sub_dict:
-                    # if we can match, then we can simply copy
-                    # time data
-                    standard_sub = original_sub_dict[sub.subtitle_id]
-                    sub.start_time = standard_sub.start_time
-                    sub.end_time = standard_sub.end_time
-                    sub.subtitle_order = standard_sub.subtitle_order
-                    sub.datetime_started = datetime.now()
-                sub.pk = None
-                sub.version = version
-                sub.save()
-
-        self.is_forked = True
-        self.standard_language = None
-        self.save()
-
-    def save(self, updates_timestamp=True, *args, **kwargs):
-        if 'tern_sync' not in kwargs:
-            self.needs_sync = True
-        else:
-            kwargs.pop('tern_sync')
-
-        if updates_timestamp:
-            self.created = datetime.now()
-        if self.language:
-            assert self.language in VALID_LANGUAGE_CODES, \
-                "Subtitle Language %s should be a valid code." % self.language
-        super(SubtitleLanguage, self).save(*args, **kwargs)
-
-    def calculate_percent_done(self):
-        if not self.is_dependent():
-            return None
-
-        translation_count = self.nonblank_subtitle_count(public_only=False)
-        real_standard_language = self.standard_language
-
-        if real_standard_language:
-            subtitle_count = real_standard_language.nonblank_subtitle_count(public_only=True)
-        else:
-            subtitle_count = 0
-
-        if subtitle_count == 0:
-            percent_done = 0
-        else:
-            percent_done = int(100 * float(translation_count) / float(subtitle_count))
-            percent_done = max(0, min(percent_done, 100))
-
-        if translation_count and percent_done < 1:
-            percent_done = 1
-
-        return percent_done
-
-    def unpublish(self, delete=False):
-        '''Unpublish all versions of this language.'''
-
-        version = self.subtitleversion_set.order_by('version_no')[:1]
-        if version:
-            return version[0].unpublish(delete=delete)
-
-    def first_version_with_status(self, status):
-        try:
-            return self.subtitleversion_set.filter(
-                    moderation_status=status).order_by('datetime_started')[0]
-        except IndexError:
-            return None
-
-    @property
-    def first_approved_version(self):
-        return self.first_version_with_status(APPROVED)
-
-    @property
-    def is_imported_from_youtube_and_not_worked_on(self):
-        versions = self.subtitleversion_set.all()
-        if versions.count() > 1 or versions.count() == 0:
-            return False
-
-        version = versions[0]
-
-        if version.note == 'From youtube':
-            return True
-
-        return False
-
-models.signals.m2m_changed.connect(User.sl_followers_change_handler, sender=SubtitleLanguage.followers.through)
-
-
-# SubtitleCollection
-# (parent class of SubtitleVersion
-class SubtitleCollection(models.Model):
-    is_forked=models.BooleanField(default=False)
-    # should not be changed directly, but using teams.moderation. as those will take care
-    # of keeping the state constant and also updating metadata when needed
-    moderation_status = models.CharField(max_length=32, choices=MODERATION_STATUSES,
-                                         default=UNMODERATED, db_index=True)
-
     class Meta:
-        abstract = True
+        unique_together = (('video', 'language', 'standard_language'),)
 
+    def __unicode__(self):
+        if self.is_original and not self.language:
+            return 'Original'
+        return self.get_language_display()
+
+models.signals.m2m_changed.connect(User.sl_followers_change_handler,
+                                   sender=SubtitleLanguage.followers.through)
 
 
 # SubtitleVersion
-class SubtitleVersionManager(models.Manager):
-    def not_restricted_by_moderation(self):
-        return self.get_query_set().exclude(moderation_status__in=[WAITING_MODERATION, REJECTED])
-
-    def new_version(self, parser, language, user, translated_from=None,
-            note="", timestamp=None, moderation_status=None, title='',
-            description=''):
-
-        version_no = 0
-        last_version = language.version(public_only=False)
-
-        if last_version is not None:
-            version_no = last_version.version_no + 1
-            title = title or last_version.title
-            description = description or last_version.description
-        else:
-            video = language.video
-            title = title or video.get_title_display()
-            description = description or video.get_description_display()
-
-        forked = not bool(translated_from)
-        original_subs = None
-        forked_from = None
-
-        if isinstance(translated_from, SubtitleVersion):
-            forked_from = translated_from
-            original_subs = list(translated_from.subtitle_set.order_by("subtitle_order"))
-        else:
-            if translated_from and translated_from.version():
-                original_subs = list(translated_from.version().subtitle_set.order_by("subtitle_order"))
-                forked_from = translated_from.version()
-
-        version = SubtitleVersion(
-                language=language, version_no=version_no, note=note,
-                is_forked=forked, time_change=None, text_change=None,
-                title=title, description=description)
-
-        if forked:
-            version.forked_from = forked_from
-
-        version.datetime_started = timestamp or datetime.now()
-        version.user = user
-
-        if moderation_status and moderation_status in (WAITING_MODERATION, UNMODERATED):
-            version.moderation_status = moderation_status
-
-        version.save()
-
-        ids = set()
-        new_subtitles = []
-        new_metadata = []
-        for i, item in enumerate(parser):
-            original_sub  = None
-
-            if translated_from and len(original_subs) > i:
-               original_sub  = original_subs[i]
-
-               id = original_sub.subtitle_id
-               order = original_sub.subtitle_order
-               paragraph = original_sub.start_of_paragraph
-            else:
-                id = int(random.random()*10e12)
-                order = i +1
-
-                while id in ids:
-                    id = int(random.random()*10e12)
-
-                paragraph = item.get('start_of_paragraph', False)
-
-            ids.add(id)
-
-            metadata = item.pop('metadata', None)
-
-            # Normally this is done in Subtitle.save(), but bulk inserting
-            # doesn't call that.
-            start_time = item['start_time']
-            end_time = item['end_time']
-            if not is_synced_value(start_time):
-                start_time = None
-            if not is_synced_value(end_time):
-                end_time = None
-
-            s = Subtitle(subtitle_id=str(id),
-                         subtitle_order=order,
-                         subtitle_text=item['subtitle_text'],
-                         start_time=start_time,
-                         end_time=end_time,
-                         start_of_paragraph=paragraph)
-            s.version_id = version.pk
-            new_subtitles.append(s)
-
-            if metadata:
-                for name, value in metadata.items():
-                    new_metadata.append((str(id), name, value))
-
-        insert_many(new_subtitles)
-
-        for id, name, value in new_metadata:
-            subtitle = version.subtitle_set.get(subtitle_id=id)
-            SubtitleMetadata(subtitle=subtitle, key=name, data=value).save()
-
-        return version
-
-class SubtitleVersion(SubtitleCollection):
+class SubtitleVersion(models.Model):
     """
     user -> The legacy data model allowed null users. We do not allow it anymore, but
     for those cases, we've replaced it with the user created on the syncdb commit (see
@@ -1399,6 +1026,11 @@ class SubtitleVersion(SubtitleCollection):
     notification_sent = models.BooleanField(default=False)
     result_of_rollback = models.BooleanField(default=False)
     forked_from = models.ForeignKey("self", blank=True, null=True)
+    is_forked=models.BooleanField(default=False)
+    # should not be changed directly, but using teams.moderation. as those will take care
+    # of keeping the state constant and also updating metadata when needed
+    moderation_status = models.CharField(max_length=32, choices=MODERATION_STATUSES,
+                                         default=UNMODERATED, db_index=True)
 
     title = models.CharField(max_length=2048, blank=True)
     description = models.TextField(blank=True, null=True)
@@ -1410,8 +1042,6 @@ class SubtitleVersion(SubtitleCollection):
                                                 null=True, blank=True,
                                                 editable=False)
 
-    objects = SubtitleVersionManager()
-
     class Meta:
         ordering = ['-version_no']
         unique_together = (('language', 'version_no'),)
@@ -1420,268 +1050,6 @@ class SubtitleVersion(SubtitleCollection):
     def __unicode__(self):
         return u'%s #%s' % (self.language, self.version_no)
 
-    def save(self, *args, **kwargs):
-        if 'tern_sync' not in kwargs:
-            self.needs_sync = True
-        else:
-            kwargs.pop('tern_sync')
-
-        created = not self.pk
-        super(SubtitleVersion, self).save(*args, **kwargs)
-        if created:
-            #but some bug happen, I've no idea why
-            Action.create_caption_handler(self, self.datetime_started)
-            if self.user:
-                self.language.video.followers.remove(self.user)
-                self.language.followers.add(self.user)
-            if self.language.is_original and self.title != self.video.title:
-                self.video.title = self.title
-                self.video.save()
-
-    def changed_from(self, other_subs):
-        my_subs = self.subtitles()
-        if len(other_subs) != len(my_subs):
-            return True
-        pairs = zip(my_subs, other_subs)
-        for pair in pairs:
-            if pair[0].text != pair[1].text or \
-                    pair[0].start_time != pair[1].start_time or \
-                    pair[0].end_time != pair[1].end_time:
-                return True
-        return False
-
-    def has_subtitles(self):
-        return self.subtitle_set.exists()
-
-    @models.permalink
-    def get_absolute_url(self):
-        return ('videos:subtitleversion_detail',
-                [self.video.video_id, self.language.language, self.language.pk,
-                 self.pk])
-
-    def is_dependent(self):
-        return not self.language.is_original and not self.is_forked
-
-    def revision_time(self):
-        today = date.today()
-        yesterday = today - timedelta(days=1)
-        d = self.datetime_started.date()
-        if d == today:
-            return 'Today'
-        elif d == yesterday:
-            return 'Yesterday'
-        else:
-            d = d.strftime('%m/%d/%Y')
-        return d
-
-    def time_change_display(self):
-        if not self.time_change:
-            return '0%'
-        else:
-            return '%.0f%%' % (self.time_change * 100)
-
-    def text_change_display(self):
-        if not self.text_change:
-            return '0%'
-        else:
-            return '%.0f%%' % (self.text_change * 100)
-
-    def language_display(self):
-        return self.language.language_display()
-
-    @property
-    def video(self):
-        return self.language.video;
-
-    def _get_standard_collection(self, public_only=True):
-        standard_language = self.language.standard_language
-        if standard_language:
-            return standard_language.latest_version(public_only=public_only)
-
-    def ordered_subtitles(self, public_only=True):
-        subtitles = self.subtitles(public_only=True)
-        subtitles.sort(key=lambda item: item.sub_order)
-        return subtitles
-
-    def prev_version(self):
-        cls = self.__class__
-        try:
-            return cls.objects.filter(version_no__lt=self.version_no) \
-                      .filter(language=self.language) \
-                      .exclude(text_change=0, time_change=0)[:1].get()
-        except models.ObjectDoesNotExist:
-            pass
-
-    def next_version(self):
-        cls = self.__class__
-        try:
-            return cls.objects.filter(version_no__gt=self.version_no) \
-                      .filter(language=self.language) \
-                      .exclude(text_change=0, time_change=0) \
-                      .order_by('version_no')[:1].get()
-        except models.ObjectDoesNotExist:
-            pass
-
-    def rollback(self, user):
-        cls = self.__class__
-        #to be sure we have real data in instance, without cached values in attributes
-        lang = SubtitleLanguage.objects.get(id=self.language.id)
-        latest_subtitles = lang.latest_version(public_only=False)
-        note = u'rollback to version #%s' % self.version_no
-
-        if latest_subtitles.result_of_rollback is False:
-            # if we have tanslations, we need to keep a forked version of them
-            # else all translations will be wiped by an earlier original rollback
-            for translation in self.language.translations():
-                if len(translation.latest_subtitles()) > 0:
-                    try:
-                        # this can fail, because if we already have a forked subs with this lang
-                        # we will hit the db unique constraint
-                        translation.fork(result_of_rollback=True)
-                    except IntegrityError:
-                        raise
-                        logger.warning(
-                            "Got error on forking insinde rollback, original %s, forked %s" %
-                            (lang.pk, translation.pk))
-
-        last_version = self.language.latest_version(public_only=False)
-        new_version_no = last_version.version_no + 1
-        new_version = cls(language=lang, version_no=new_version_no,
-                          datetime_started=datetime.now(), user=user, note=note,
-                          is_forked=self.is_forked, result_of_rollback=True,
-                          title=self.title, description=self.description)
-        new_version.save()
-
-        for item in self.subtitle_set.all():
-            item.duplicate_for(version=new_version).save()
-        if last_version.forked_from:
-            if self.language.standard_language and self.language.is_forked == True :
-                # we are rolling back to a version that was dependent
-                # but isn't anymore, so we need to restablish that dependency
-                self.language.is_forked = False
-                self.language.save()
-        return new_version
-
-    def is_all_blank(self):
-        for s in self.subtitles():
-            if s.text.strip() != '':
-                return False
-        return True
-
-    def unpublish(self, delete=False):
-        '''Unpublish this subtitle version (and all versions after it).
-
-        Does NOT create any Tasks to go back and fix them.
-
-        Returns the last SubtitleVersion in the chain (which is the one you'll
-        probably want to create a task for) when not deleting.
-
-        '''
-        team_video = self.language.video.get_team_video()
-
-        assert team_video, \
-               "Cannot unpublish for a video not moderated by a team."
-
-        assert team_video.team.unpublishing_enabled(), \
-               "Cannot unpublish for a team without unpublishing enabled."
-
-        language = self.language
-
-        versions = SubtitleVersion.objects.filter(
-            # This filter includes this SubtitleVersion itself
-            language=self.language,
-            version_no__gte=self.version_no
-        ).order_by('version_no')
-
-        if delete:
-            versions.delete()
-
-            # Delete the SubtitleLanguage too if we're removing the root version
-            # (and therefore all later ones too).
-            if self.version_no == 0:
-                language.delete()
-
-            return None
-        else:
-            last_version = None
-            for version in versions:
-                # Loop through instead of using .update() to ensure any .save()
-                # methods and signals get called properly.
-                version.moderation_status = WAITING_MODERATION
-                version.save()
-                last_version = version
-
-            # TODO: Dependent translations.  We'll also need to create tasks for
-            # them.
-            return last_version
-
-    @property
-    def is_public(self):
-        return self.moderation_status in [APPROVED, UNMODERATED]
-
-    @property
-    def is_translation(self):
-        return self.is_dependent()
-
-    @property
-    def is_transcription(self):
-        return not self.is_dependent()
-
-
-    # Metadata
-    def _get_metadata(self, key):
-        """Return the metadata for this version for the given key, or None."""
-        try:
-            m = self.metadata.get(key=SubtitleVersionMetadata.KEY_IDS[key])
-            return m.get_data()
-        except SubtitleVersionMetadata.DoesNotExist:
-            return None
-
-
-    def get_reviewed_by(self):
-        """Return the User that reviewed this version, or None.  Hits the DB."""
-        return self._get_metadata('reviewed_by')
-
-    def get_approved_by(self):
-        """Return the User that approved this version, or None.  Hits the DB."""
-        return self._get_metadata('approved_by')
-
-    def get_workflow_origin(self):
-        """Return the step of the workflow where this version originated, or None.
-
-        Hits the DB.
-
-        May be None if this version didn't come from any workflow step.
-
-        """
-        return self._get_metadata('workflow_origin')
-
-
-    def _set_metadata(self, key, value):
-        v, created = SubtitleVersionMetadata.objects.get_or_create(
-                        subtitle_version=self,
-                        key=SubtitleVersionMetadata.KEY_IDS[key])
-        v.data = value
-        v.save()
-
-
-    def set_reviewed_by(self, user):
-        """Set the User that reviewed this version."""
-        self.language.followers.add(user)
-        self._set_metadata('reviewed_by', user.pk)
-
-    def set_approved_by(self, user):
-        """Set the User that approved this version."""
-        self._set_metadata('approved_by', user.pk)
-
-    def set_workflow_origin(self, origin):
-        """Set the step of the workflow that this version originated in."""
-        self._set_metadata('workflow_origin', origin)
-
-    def subtitles(self):
-        # FIXME: remove this method once
-        # https://unisubs.sifterapp.com/issues/1567 is fixed
-        pass
 
 def record_workflow_origin(version, team_video):
     """Figure out and record where the given version started out.
@@ -1728,42 +1096,9 @@ def update_followers(sender, instance, created, **kwargs):
             # User already follows the video.
             pass
 
+
 post_save.connect(Awards.on_subtitle_version_save, SubtitleVersion)
 post_save.connect(update_followers, SubtitleVersion)
-
-
-def has_viewable_draft(version, user):
-    """Return whether the given version has draft subtitles viewable by the user.
-
-    This function performs several DB queries, so try not to call it more than
-    once per page.
-
-    TODO: Different logic for rejected vs waiting_moderation?
-
-    """
-    team_video = version.subtitle_language.video.get_team_video()
-
-    if not team_video:
-        return False
-
-    # Public versions are not drafts.
-    if version.is_public:
-        return False
-
-    # Otherwise the version is a draft.
-    # Non-logged-in users can never see it.
-    if not user or not user.is_authenticated() or user.is_anonymous:
-        return False
-
-    # Subtitle authors can view their own drafts.
-    if not version.user.is_anonymous and user.pk == version.user.pk:
-        return True
-
-    # Anyone reviewing/approving this version can view its drafts.
-    users = (version.task_set.all_review_or_approve()
-                             .values_list('assignee__id', flat=True))
-    return user.pk in users
-
 
 class SubtitleVersionMetadata(models.Model):
     """This model is used to add extra metadata to SubtitleVersions.
@@ -1806,11 +1141,6 @@ class SubtitleVersionMetadata(models.Model):
 
 
 # Subtitle
-class SubtitleManager(models.Manager):
-
-    def unsynced(self):
-        return self.get_query_set().filter(start_time__isnull=True, end_time__isnull=True)
-
 class Subtitle(models.Model):
     version = models.ForeignKey(SubtitleVersion, null=True)
     subtitle_id = models.CharField(max_length=32, blank=True)
@@ -1826,65 +1156,16 @@ class Subtitle(models.Model):
     end_time = models.IntegerField(null=True, default=None, db_column='end_time_ms')
     start_of_paragraph = models.BooleanField(default=False)
 
-    objects = SubtitleManager()
-
     class Meta:
         ordering = ['subtitle_order']
         unique_together = (('version', 'subtitle_id'),)
 
 
-    def duplicate_for(self, version=None):
-        return Subtitle(version=version,
-                        start_of_paragraph=self.start_of_paragraph,
-                        subtitle_id=self.subtitle_id,
-                        subtitle_order=self.subtitle_order,
-                        subtitle_text=self.subtitle_text,
-                        start_time=self.start_time,
-                        end_time=self.end_time)
-
-    @classmethod
-    def trim_list(cls, subtitles):
-        first_nonblank_index = -1
-        last_nonblank_index = -1
-        index = -1
-        for subtitle in subtitles:
-            index += 1
-            if subtitle.subtitle_text.strip() != '':
-                if first_nonblank_index == -1:
-                    first_nonblank_index = index
-                last_nonblank_index = index
-        if first_nonblank_index != -1:
-            return subtitles[first_nonblank_index:last_nonblank_index + 1]
-        else:
-            return []
-
-    def update_from(self, caption_dict, is_dependent_translation=False):
-        if 'text' in caption_dict:
-            self.subtitle_text = caption_dict['text']
-
-        if not is_dependent_translation:
-            if 'start_time' in caption_dict:
-                self.start_time = caption_dict['start_time']
-
-            if 'end_time' in caption_dict:
-                self.end_time = caption_dict['end_time']
-
-        
-    def save(self, *args, **kwargs):
-        # Normalize start_time and end_time to None (separately) if either is
-        # not a valid time.
-        if self.start_time  == -1:
-            self.start_time = None
-
-        if  self.start_time == -1:
-            self.end_time = None
-
-        return super(Subtitle, self).save(*args, **kwargs)
-
     def __unicode__(self):
         if self.pk:
-            return u"(%4s) %s %s -> %s -  = %s -- Version %s" % (self.subtitle_order, self.subtitle_id,
-                                          self.start_time, self.end_time,  self.subtitle_text, self.version_id)
+            return u"(%4s) %s %s -> %s -  = %s -- Version %s" % (
+                self.subtitle_order, self.subtitle_id, self.start_time,
+                self.end_time,  self.subtitle_text, self.version_id)
 
 
 # SubtitleMetadata
@@ -1963,13 +1244,13 @@ class ActionRenderer(object):
         return render_to_string(self.template_name, context)
 
     def _base_kwargs(self, item):
-        data = {}
+        data = {'language_url': '', 'new_language':''}
         # deleted videos event have no video obj
         if item.video:
             data['video_url']= item.video.get_absolute_url()
             data['video_name'] = unicode(item.video)
         if item.new_language:
-            data['language'] = item.new_language.get_language_code_display()
+            data['new_language'] = item.new_language.get_language_code_display()
             data['language_url'] = item.new_language.get_absolute_url()
         if item.user:
             data["user_url"] = reverse("profiles:profile", kwargs={"user_id":item.user.id})
@@ -1978,27 +1259,27 @@ class ActionRenderer(object):
 
     def render_REVIEW_VERSION(self, item):
         kwargs = self._base_kwargs(item)
-        msg = _('  reviewed <a href="%(language_url)s">%(language)s</a> subtitles for <a href="%(video_url)s">%(video_name)s</a>') % kwargs
+        msg = _('  reviewed <a href="%(language_url)s">%(new_language)s</a> subtitles for <a href="%(video_url)s">%(video_name)s</a>') % kwargs
         return msg
 
     def render_ACCEPT_VERSION(self, item):
         kwargs = self._base_kwargs(item)
-        msg = _('  accepted <a href="%(language_url)s">%(language)s</a> subtitles for <a href="%(video_url)s">%(video_name)s</a>') % kwargs
+        msg = _('  accepted <a href="%(language_url)s">%(new_language)s</a> subtitles for <a href="%(video_url)s">%(video_name)s</a>') % kwargs
         return msg
 
     def render_REJECT_VERSION(self, item):
         kwargs = self._base_kwargs(item)
-        msg = _('  rejected <a href="%(language_url)s">%(language)s</a> subtitles for <a href="%(video_url)s">%(video_name)s</a>') % kwargs
+        msg = _('  rejected <a href="%(language_url)s">%(new_language)s</a> subtitles for <a href="%(video_url)s">%(video_name)s</a>') % kwargs
         return msg
 
     def render_APPROVE_VERSION(self, item):
         kwargs = self._base_kwargs(item)
-        msg = _('  approved <a href="%(language_url)s">%(language)s</a> subtitles for <a href="%(video_url)s">%(video_name)s</a>') % kwargs
+        msg = _('  approved <a href="%(language_url)s">%(new_language)s</a> subtitles for <a href="%(video_url)s">%(video_name)s</a>') % kwargs
         return msg
 
     def render_DECLINE_VERSION(self, item):
         kwargs = self._base_kwargs(item)
-        msg = _('  declined <a href="%(language_url)s">%(language)s</a> subtitles for <a href="%(video_url)s">%(video_name)s</a>') % kwargs
+        msg = _('  declined <a href="%(language_url)s">%(new_language)s</a> subtitles for <a href="%(video_url)s">%(video_name)s</a>') % kwargs
         return msg
 
     def render_DELETE_VIDEO(self, item):
@@ -2033,9 +1314,9 @@ class ActionRenderer(object):
 
         if item.new_language:
             if item.user:
-                msg = _(u'commented on <a href="%(comments_url)s">%(language)s subtitles</a> for <a href="%(video_url)s">%(video_name)s</a>')
+                msg = _(u'commented on <a href="%(comments_url)s">%(new_language)s subtitles</a> for <a href="%(video_url)s">%(video_name)s</a>')
             else:
-                msg = _(u'Comment added for <a href="%(comments_url)s">%(language)s subtitles</a> for <a href="%(video_url)s">%(video_name)s</a>')
+                msg = _(u'Comment added for <a href="%(comments_url)s">%(new_language)s subtitles</a> for <a href="%(video_url)s">%(video_name)s</a>')
         else:
             if item.user:
                 msg = _(u'commented on <a href="%(video_url)s">%(video_name)s</a>')
@@ -2048,9 +1329,9 @@ class ActionRenderer(object):
         kwargs = self._base_kwargs(item)
 
         if item.user:
-            msg = _(u'started <a href="%(language_url)s">%(language)s subtitles</a> for <a href="%(video_url)s">%(video_name)s</a>')
+            msg = _(u'started <a href="%(language_url)s">%(new_language)s subtitles</a> for <a href="%(video_url)s">%(video_name)s</a>')
         else:
-            msg = _(u'<a href="%(language_url)s">%(language)s subtitles</a> started for <a href="%(video_url)s">%(video_name)s</a>')
+            msg = _(u'<a href="%(language_url)s">%(new_language)s subtitles</a> started for <a href="%(video_url)s">%(video_name)s</a>')
 
         return msg % kwargs
 
@@ -2058,9 +1339,9 @@ class ActionRenderer(object):
         kwargs = self._base_kwargs(item)
 
         if item.user:
-            msg = _(u'edited <a href="%(language_url)s">%(language)s subtitles</a> for <a href="%(video_url)s">%(video_name)s</a>')
+            msg = _(u'edited <a href="%(language_url)s">%(new_language)s subtitles</a> for <a href="%(video_url)s">%(video_name)s</a>')
         else:
-            msg = _(u'<a href="%(language_url)s">%(language)s subtitles</a> edited for <a href="%(video_url)s">%(video_name)s</a>')
+            msg = _(u'<a href="%(language_url)s">%(new_language)s subtitles</a> edited for <a href="%(video_url)s">%(video_name)s</a>')
 
         return msg % kwargs
 
@@ -2291,6 +1572,7 @@ class Action(models.Model):
     @classmethod
     def create_comment_handler(cls, sender, instance, created, **kwargs):
         if created:
+            from subtitles.models import SubtitleLanguage as NewSubtitleLanguage
             model_class = instance.content_type.model_class()
             obj = cls(user=instance.user)
             obj.comment = instance
@@ -2298,8 +1580,8 @@ class Action(models.Model):
             obj.action_type = cls.COMMENT
             if issubclass(model_class, Video):
                 obj.video_id = instance.object_pk
-            if issubclass(model_class, SubtitleLanguage):
-                obj.language_id = instance.object_pk
+            if issubclass(model_class, NewSubtitleLanguage):
+                obj.new_language_id = instance.object_pk
                 obj.video = instance.content_object.video
             obj.save()
 
@@ -2366,7 +1648,7 @@ class Action(models.Model):
     @classmethod
     def create_reviewed_video_handler(cls, version, moderator,  **kwargs):
         obj = cls(video=version.video)
-        obj.language = version.language
+        obj.new_language = version.language
         obj.user = moderator
         obj.action_type = cls.REVIEW_VERSION
         obj.created = datetime.now()

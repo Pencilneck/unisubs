@@ -355,7 +355,7 @@ unisubs.translate.Dialog.prototype.getServerModel = function(){
     return this.serverModel_;
 };
 unisubs.translate.Dialog.prototype.makeJsonSubs =  function (){
-    return this.serverModel_.getCaptionSet().makeJsonSubs();
+    return this.serverModel_.getCaptionSet().x['xmlToString'](true, true);
 };
 unisubs.translate.Dialog.prototype.forkAndClose = function() {
     var dialog = new unisubs.translate.ForkDialog(
@@ -405,4 +405,8 @@ unisubs.translate.Dialog.prototype.captionReached_ = function(event) {
     }
 
     this.getVideoPlayerInternal().showCaptionText(caption);
+};
+
+unisubs.translate.Dialog.prototype.makeDFXPString =  function (){
+    return this.serverModel_.captionSet_.x['xmlToString'](true, true)
 };

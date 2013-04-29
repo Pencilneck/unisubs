@@ -5,6 +5,7 @@ from videos.models import VideoUrl, VIDEO_TYPE_YOUTUBE
 from videos.types import UPDATE_VERSION_ACTION
 from auth.models import CustomUser as User
 from models import ThirdPartyAccount
+from remover import Remover
 from utils.metrics import Gauge
 
 
@@ -26,7 +27,7 @@ def get_youtube_data(user_pk):
         logger.error('User with PK %s not found' % user_pk)
         return
 
-    usernames = [a.full_name for a in user.third_party_accounts.all()]
+    usernames = [a.username for a in user.third_party_accounts.all()]
     urls = VideoUrl.objects.filter(owner_username__in=usernames)
     videos = [url.video for url in urls]
 
@@ -36,7 +37,9 @@ def get_youtube_data(user_pk):
         languages = video.completed_subtitle_languages()
 
         for language in languages:
-            version = language.latest_version()
+            # mirror_on_third_party should be verifying that
+            # we only send public versions
+            version = language.get_tip(public=False)
             data.append((video, language, version,))
 
     return data
@@ -60,3 +63,19 @@ def mirror_existing_youtube_videos(user_pk):
 def gauge_tpas():
     count = ThirdPartyAccount.objects.filter(type=VIDEO_TYPE_YOUTUBE).count()
     Gauge('youtube.accounts_linked').report(count)
+
+
+@task
+def remove_youtube_descriptions_for_tpa(tpa_pk):
+    """
+    Remove the amara credit in the descriptions of all youtube videos
+    associated with the third party account specified as `tpa_pk`.
+    """
+    try:
+        tpa = ThirdPartyAccount.objects.get(pk=tpa_pk)
+    except ThirdPartyAccount.DoesNotExist:
+        logger.error('tpa account not found', extra={'tpa_pk': tpa_pk})
+        return
+
+    remover = Remover(tpa)
+    remover.remove_all()

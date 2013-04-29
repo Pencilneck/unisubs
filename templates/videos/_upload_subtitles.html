@@ -27,7 +27,7 @@
                         <label>{% trans 'Language' %}</label>
                         {{ form.language_code }}
                     </div>
-                    {% if not video.has_original_language %}
+                    {% if not video.primary_audio_language_code %}
                         <div style="margin: 10px 0 10px 0;">
                             <label>{% trans 'Video Language' %}</label>
                             {{ form.primary_audio_language_code }}

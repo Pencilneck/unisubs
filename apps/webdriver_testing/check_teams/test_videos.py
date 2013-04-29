@@ -307,7 +307,7 @@ class TestCaseSearch(WebdriverTestCase):
         """
         
         self.videos_tab.open_videos_tab(self.team.slug)
-        self.videos_tab.search('show this text')
+        self.videos_tab.search('zeus')
         self.assertTrue(self.videos_tab.video_present(self.test_video.title))
 
     def test_search__nonascii(self):

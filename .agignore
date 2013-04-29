@@ -64,9 +64,12 @@ media/static-cache
 ./tags.bak
 history.png
 history.dot
+g.dot
 apps/webdriver_testing/Screenshots/*.png
 apps/webdriver_testing/Screenshots/nosetests.xml
 apps/webdriver_testing/Screenshots/results.html
 *.po
 jquery-*.js
 amara-jquery-*.js
+*.min.js
+tmp.sql

@@ -24,6 +24,7 @@ media/embed.js
 media/js/config.js
 media/js/statwidget/statwidgetconfig.js
 media/src/js/embedder/conf.js
+media/src/js/popcorn/popcorn.netflix.js
 media/js/mirosubs-widgetizer*.js
 media/js/mirosubs-extension.js
 media/js/mirosubs-statwidget.js
@@ -61,12 +62,13 @@ apps/services
 apps/servicesauth
 media/unisubservices
 user-data/pictures
-.vagrant
+.vagrant*
 venv
 unisubs-integration
 /.ponyrc
 user-data/video
 media/static-cache
+media/admin
 .ropeproject
 /tags
 /tags.bak
@@ -81,3 +83,5 @@ testacular-test-results.xml
 .idea/
 amara-fabric/
 babelsubs/
+tmp.sql
+node_modules/

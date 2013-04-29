@@ -44,9 +44,9 @@ def upload_subtitles(context, video):
     if current_language:
         initial['language_code'] = current_language.language_code
 
-    primary_language = video.get_primary_audio_subtitle_language()
-    if primary_language:
-        initial['primary_audio_language_code'] = primary_language.language_code
+    if video.primary_audio_language_code:
+        initial['primary_audio_language_code'] = video.primary_audio_language_code
+
 
     context['form'] = SubtitlesUploadForm(context['user'], video,
                                           initial=initial)

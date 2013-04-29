@@ -1,0 +1,195 @@
+import os
+import codecs
+import time
+
+from apps.webdriver_testing.webdriver_base import WebdriverTestCase
+from apps.webdriver_testing.pages.site_pages import video_page
+from apps.webdriver_testing.pages.site_pages import video_language_page
+from apps.webdriver_testing import data_helpers
+from apps.webdriver_testing.data_factories import UserFactory
+from apps.webdriver_testing.data_factories import VideoUrlFactory
+from apps.webdriver_testing.pages.editor_pages import subtitle_editor 
+
+class TestCaseUploadTranslation(WebdriverTestCase):
+    """TestSuite for uploading subtitles with untimed text.  """
+    NEW_BROWSER_PER_TEST_CASE = False
+
+    @classmethod 
+    def setUpClass(cls):
+        super(TestCaseUploadTranslation, cls).setUpClass()
+        cls.data_utils = data_helpers.DataHelpers()
+        cls.user = UserFactory.create(username = 'user')
+        cls.video_pg = video_page.VideoPage(cls)
+        cls.video_language_pg = video_language_page.VideoLanguagePage(cls)
+
+        cls.subs_data_dir = os.path.join(os.getcwd(), 'apps', 
+            'webdriver_testing', 'subtitle_data')
+        cls.video_pg.open_page('videos/create/')
+        cls.video_pg.log_in(cls.user.username, 'password')
+
+    def setUp(self):
+        self.video_pg.open_page('videos/create/')
+        self.video_pg.handle_js_alert('accept')
+        self.tv = self.data_utils.create_video()
+        self.data_utils.upload_subs(self.tv)
+        self.video_pg.open_video_page(self.tv.video_id)
+
+    def _upload_and_verify(self, tv, sub_file, language, lang_code):
+        """Upload the subtitle file and confirm subs are stored.
+
+        Checking the subtitle count of the expected value vs the
+        value in the database for the latest version of the lang.
+
+        """
+        message = self.video_pg.upload_subtitles(language, sub_file, 
+                                       translated_from='English')
+        self.logger.info("MESSAGE: %s" %message)
+        subtitle_lang = tv.subtitle_language(lang_code) 
+        page_url = 'videos/{0}/{1}/'.format(tv.video_id, lang_code)
+        self.video_pg.open_page(page_url)
+        self.video_pg.handle_js_alert('accept')
+        return subtitle_lang.get_subtitle_count()
+
+
+    def test_new_translation(self):
+        """Upload a new translation.
+
+        """
+        test_file = 'Timed_text.sv.dfxp'
+        sub_file = os.path.join(self.subs_data_dir, test_file)       
+        sc = self._upload_and_verify(self.tv, sub_file, 'Swedish', 'sv')
+        self.assertEqual(sc, 72)    
+
+
+    def test_editable(self):
+        """Uploaded translation can be opened in the editor.
+
+        """
+        test_file = 'Timed_text.sv.dfxp'
+        sub_file = os.path.join(self.subs_data_dir, test_file)       
+        self._upload_and_verify(self.tv, sub_file, 'Swedish', 'sv')
+
+        
+        #Open the language page for the video and click Edit Subtitles 
+        self.video_language_pg.open_video_lang_page(self.tv.video_id, 'sv')
+        self.video_language_pg.edit_subtitles()
+        sub_editor = subtitle_editor.SubtitleEditor(self)
+        self.assertEqual('Adding a New Translation', 
+                         sub_editor.dialog_title())
+
+    def test_txt(self):
+        """Upload translation (de) in a txt file.
+
+        """
+        test_file = 'Timed_text.en.txt'
+        sub_file = os.path.join(self.subs_data_dir, test_file)
+        sc = self._upload_and_verify(self.tv, sub_file, 'German', 'de')
+        self.assertEqual(sc, 72) 
+
+    def test_srt(self):
+        """Upload translation (sv) in a srt file.
+
+        """
+        sub_file = os.path.join(self.subs_data_dir, 'Timed_text.sv.srt')
+        sc = self._upload_and_verify(self.tv, sub_file, 'Swedish', 'sv')
+        self.assertEqual(sc, 72) 
+       
+
+    def test_sbv__more_lines(self):
+        """Can not upload dependant translation with more lines than source'.
+
+        """
+        sub_file = os.path.join(self.subs_data_dir, 'Timed_text.zh-cn.sbv')
+        message = self.video_pg.upload_subtitles('Chinese, Simplified', sub_file, 
+                                       translated_from='English')
+        self.assertEqual(message, ("Sorry, we couldn't upload your file "
+                                   "because the number of lines in your "
+                                   "translation (243) doesn't match the "
+                                   "original (72)."))
+
+    def test_ssa__less_lines(self):
+        """Can upload a dependant translation with less lines than source.
+
+        """
+        sub_file = os.path.join(self.subs_data_dir, 'less_lines.ssa')       
+        sc = self._upload_and_verify(self.tv, sub_file, 'Hungarian', 'hu')
+        self.assertEqual(sc, 7) 
+
+    def test_dfxp(self):
+        """Upload translation (fr) in a dfxp file.
+
+        """
+        sub_file = os.path.join(self.subs_data_dir, 'Timed_text.sv.dfxp')
+        sc = self._upload_and_verify(self.tv, sub_file, 'French', 'fr')
+        self.assertEqual(sc, 72)
+
+    def test_xml_entities(self):
+        """Upload translation with ampersand in text.
+
+        """
+        sub_file = os.path.join(self.subs_data_dir, 'xml_entities.en.srt')
+        sc = self._upload_and_verify(self.tv, sub_file, 'French', 'fr')
+        self.assertEqual(sc, 5)
+
+class TestCaseEditUploaded(WebdriverTestCase):
+    """TestSuite for uploading subtitles with untimed text.  """
+    NEW_BROWSER_PER_TEST_CASE = True 
+
+    def setUp(self):
+        super(TestCaseEditUploaded, self).setUp()
+        self.data_utils = data_helpers.DataHelpers()
+        self.user = UserFactory.create(username = 'user')
+        self.video_pg = video_page.VideoPage(self)
+        self.video_language_pg = video_language_page.VideoLanguagePage(self)
+
+        self.subs_data_dir = os.path.join(os.getcwd(), 'apps', 
+            'webdriver_testing', 'subtitle_data')
+        self.video_pg.open_page('videos/create/')
+        self.video_pg.handle_js_alert('accept')
+        self.video_pg.log_in(self.user.username, 'password')
+
+    def _upload_and_verify(self, video, sub_file, language, lang_code):
+        """Upload the subtitle file and confirm subs are stored.
+
+        Checking the subtitle count of the expected value vs the
+        value in the database for the latest version of the lang.
+
+        """
+        message = self.video_pg.upload_subtitles(language, sub_file, 
+                                       translated_from='English')
+        self.logger.info("MESSAGE: %s" %message)
+        subtitle_lang = video.subtitle_language(lang_code) 
+        page_url = 'videos/{0}/{1}/'.format(video.video_id, lang_code)
+        self.video_pg.open_page(page_url)
+        self.video_pg.handle_js_alert('accept')
+        return subtitle_lang.get_subtitle_count()
+
+
+    def test_edit__large(self):
+        """Upload a large set of subtitles then open for editing. """
+        self.video_pg.page_refresh()
+        video =  self.data_utils.create_video()
+        data = {'language_code': 'en',
+                'video': video.pk,
+                'primary_audio_language_code': 'en',
+                'draft': open('apps/webdriver_testing/subtitle_data/'
+                              'How-to.en.srt'),
+                'is_complete': True,
+                'complete': 1
+           }
+        r = self.data_utils.upload_subs(
+                video, 
+                data=data,
+                user=dict(username=self.user.username, 
+                          password='password'))
+        self.logger.info('RESPONSE: %s' % r)
+
+        self.video_pg.open_video_page(video.video_id)
+
+        sub_file = os.path.join(self.subs_data_dir, 'srt-full.srt')
+        self._upload_and_verify(video, sub_file, 'French', 'fr')
+        self.video_language_pg.open_video_lang_page(video.video_id, 'fr')
+        self.video_language_pg.edit_subtitles()
+        sub_editor = subtitle_editor.SubtitleEditor(self)
+        self.assertEqual('Adding a New Translation', 
+                         sub_editor.dialog_title())

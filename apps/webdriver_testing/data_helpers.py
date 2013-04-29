@@ -106,6 +106,7 @@ class DataHelpers(object):
             v = VideoUrlFactory(**kwargs).video
         except IntegrityError:
             v, _ = Video.get_or_create_for_url(video_url = kwargs['url'])
+        self.logger.info('Video: %s' % v.video_id)
         return v
            
 
@@ -122,7 +123,9 @@ class DataHelpers(object):
             data = {'language_code': 'en',
                     'video': video.pk,
                     'primary_audio_language_code': 'en',
-                    'draft':  open('apps/videos/fixtures/test.srt'),
+                    'draft': open('apps/webdriver_testing/subtitle_data/'
+                            'Timed_text.en.srt'),
+                    #'draft':  open('apps/videos/fixtures/test.srt'),
                     'is_complete': True,
                     'complete': 1
                     }
@@ -132,6 +135,8 @@ class DataHelpers(object):
         else:
             c.login(**self.super_user())
         response = c.post(reverse('videos:upload_subtitles'), data)
+        self.logger.info('UPLOAD RESPONSE %s' % response)
+        return response
 
 
     def create_video_with_subs(self, video_url=None, data=None):
@@ -171,5 +176,27 @@ class DataHelpers(object):
             testdata = simplejson.load(open(testdata))
         videos = _create_videos(testdata, [])
         return videos
-        
 
+    def complete_review_task(self, tv, status_code, assignee):
+        """Complete the review task, 20 for approve, 30 for reject.
+ 
+        Making the assumtion that I have only 1 at a time.
+
+        """
+        task = list(tv.task_set.incomplete_review().all())[0]
+        task.assignee = assignee
+        task.approved = status_code
+        task.save()
+        task.complete()
+
+    def complete_approve_task(self, tv, status_code, assignee):
+        """Complete the approve task, 20 for approve, 30 for reject.
+ 
+        Making the assumtion that I have only 1 at a time.
+
+        """
+        task = list(tv.task_set.incomplete_approve().all())[0]
+        task.assignee = assignee 
+        task.approved = status_code
+        task.save()
+        task.complete()

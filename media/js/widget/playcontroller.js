@@ -32,6 +32,7 @@ unisubs.widget.PlayController = function(
     this.videoTab_ = videoTab;
     this.dropDown_ = dropDown;
     this.isModerated_ = isModerated;
+    this.trackedURLs_ = new goog.structs.Set();
     if (opt_subtitleState)
         this.setUpSubs_(opt_subtitleState);
     this.menuEventHandler_ = new goog.events.EventHandler(this);
@@ -51,7 +52,6 @@ unisubs.widget.PlayController = function(
      * the cost of many calls to a dom changing function
      */
     this.nudgeShown_ = false;
-    this.trackedURLs_ = new goog.structs.Set();
 };
 
 goog.inherits(unisubs.widget.PlayController, goog.events.EventTarget);
@@ -136,16 +136,23 @@ unisubs.widget.PlayController.prototype.getSubMap = function() {
 
 unisubs.widget.PlayController.prototype.trackPlay_ = function() {
     var videoURL = this.videoSource_.getVideoURL();
-    if (!this.trackedURLs_.contains(videoURL)) {
-        this.trackedURLs_.add(videoURL);
-        unisubs.Tracker.getInstance().trackEvent(
-            "Subs Played",
-            window.location.href,
-            videoURL);
-        unisubs.Rpc.call(
-            'track_subtitle_play',
-            { 'video_id': this.videoID_ });
+    try{
+        if (!this.trackedURLs_.contains(videoURL)) {
+            this.trackedURLs_.add(videoURL);
+            unisubs.Tracker.getInstance().trackEvent(
+                "Subs Played",
+                window.location.href,
+                videoURL);
+            unisubs.Rpc.call(
+                'track_subtitle_play',
+                { 'video_id': this.videoID_ });
+        }
+    }catch(e){
+        if (console && console.log){
+            console.error("Could not track video", e.stack);
+        }
     }
+
 };
 
 unisubs.widget.PlayController.prototype.languageSelected = function(videoLanguage) {

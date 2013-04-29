@@ -34,6 +34,20 @@
             { key: 'tab', description: 'move to the next subtitle' }
         ];
 
+        $scope.showAdvancedModal = function() {
+
+            $scope.$root.$emit('show-modal', {
+                heading: 'Advanced keyboard controls',
+                text: 'Full list of keyboard shortcuts to go here.',
+                buttons: [{
+                    'text': 'Close', 'class': 'yes', 'fn': function() {
+                        $scope.$root.$broadcast('hide-modal');
+                    }
+                }]
+            });
+
+        };
+
     };
 
     root.HelpController = HelpController;

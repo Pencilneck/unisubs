@@ -48,9 +48,9 @@
 
 {% block title %}
     {% if language.is_primary_audio_language %}
-        "{{ last_version.title }}" {% trans "with" %} {{ language.get_language_code_display }} {% trans "subtitles" %} | Amara
+        "{% firstof last_version.title video.title_display_unabridged %}" {% trans "with" %} {{ language.get_language_code_display }} {% trans "subtitles" %} | Amara
     {% else %}
-        "{{ last_version.title }}" {% trans "with" %} {% if language.is_dependent %}{% trans 'translated' %}{% endif %} {{ language.get_language_code_display }} {% trans "subtitles" %} | Amara
+        "{% firstof last_version.title video.title_display_unabridged %}" {% trans "with" %} {% if language.get_translation_source_language_code %}{% trans 'translated' %}{% endif %} {{ language.get_language_code_display }} {% trans "subtitles" %} | Amara
     {% endif %}
 {% endblock %}
 
@@ -85,7 +85,7 @@
                 {% if not language.is_rtl %}
                 ←
                 {% endif %}
-                {{ last_version.title }}
+                {% firstof last_version.title video.title_display_unabridged %}
             </a>
         </h2>
         {% widget widget_params %}
@@ -130,18 +130,14 @@
                 ({{ video.languages_count }})
             {% endif %}
         </h3>
-        <div>
-            <div>
-                <ul id="subtitles-menu" {% if video.languages_count > 14 %} class="list-collapsible"{% endif %}>
-                    {% include 'videos/_left_navigation.html' %}
-                    {% if video.languages_count > 14 %}
-                        <li class="expand">
-                            <a href="#"><span class="all">{% trans 'Show all' %} ↓</span><span class="less">{% trans 'Show less' %} ↑</span></a>
-                        </li>
-                    {% endif %}
-                </ul>
-            </div>
-        </div>
+        <ul id="subtitles-menu" {% if video.languages_count > 14 %} class="list-collapsible"{% endif %}>
+            {% include 'videos/_left_navigation.html' %}
+            {% if video.languages_count > 14 %}
+                <li class="expand">
+                    <a href="#"><span class="all">{% trans 'Show all' %} ↓</span><span class="less">{% trans 'Show less' %} ↑</span></a>
+                </li>
+            {% endif %}
+        </ul>
     </div>
     <div class="grid_8 view omega">
         {% if user.is_authenticated %}
@@ -154,11 +150,11 @@
         </ul>
         <div class="tab" id="transcripts-tab">
             <div class="tools">
-                {% if request.user|can_unpublish:video and last_version.is_public %}
-                    <a href="#unpublish-modal" class="button open-modal">{% trans 'Unpublish' %}</a>
+                {% if request.user|can_delete_language:language %}
+                    <a class="button" href="{% url teams:delete-language video.get_team_video.team.slug language.pk %}">{% trans 'Delete Subtitle Language' %}</a>
                 {% endif %}
                 {% if language.is_original and request.user|can_create_subtitles_for:video or not language.is_original and request.user|can_create_translations_for:video %}
-                    <a id="edit_subtitles_button" class="button{% if not last_version.is_public and not can_edit %} disabled" title="Editing drafts is not permitted"{% else %}" href="{{edit_url}}"{% endif %}>{% trans 'Edit Subtitles' %}</a>
+                <a id="edit_subtitles_button" class="button{% if edit_disabled %} disabled" title="{% trans 'You do not have permission to edit this version' %}"{% else %}" href="{{edit_url}}"{% endif %}>{% trans 'Edit Subtitles' %}</a>
                 {% endif %}
                 {% if last_version.has_subtitles %}
                     <div class="sort_button action">
@@ -194,9 +190,12 @@
                         <a href="{{ last_version.author.profile_url}}" title="View {{ last_version.author }}'s profile">
                             <strong>{{ last_version.author }}</strong>
                         </a>.
+                        {% if user.is_staff and perms.videos.edit_video %}
+                            <a style="float: right; color: #417690; margin-right: 7px; font-weight: bold; display: inline-block;" href="{% url admin:subtitles_subtitleversion_change last_version.pk %}">{% trans "Edit in Django Admin" %}</a>
+                        {% endif %}
                     </p>
 
-                    <ol class="subtitles {% if last_version.language.is_rtl %}is_rtl{% endif %}">
+                    <ol class="subtitles {% if language.is_rtl %}is_rtl{% endif %}">
                         <li class="title">
                             <div class="field">{% trans "Title:" %}</div>
                             {{ last_version.title }}
@@ -253,10 +252,16 @@
                     {% endif %}
                 {% endif %}
             {% else %}
-                {% if language.subtitleversion_set.exists %}
+                {% if language.subtitleversion_set.extant.exists %}
                     <p class="empty">
                         {% blocktrans %}
                             This language contains subtitles that are still waiting to be moderated.  Check back later.
+                        {% endblocktrans %}
+                    </p>
+                {% elif language.subtitleversion_set.full.exists %}
+                    <p class="empty">
+                        {% blocktrans %}
+                            Sorry, this language has been removed by Amara staff members or authorized users.
                         {% endblocktrans %}
                     </p>
                 {% else %}
@@ -313,7 +318,7 @@
                             {% endif %}
                             {% if item.origin == 'rollback' and item.rollback_of_version_number %}
                                 <p>{%  trans "Rollback to version #" %}{{ item.rollback_of_version_number }}</p>
-                             {% elif item.origin == 'upload' %}
+                            {% elif item.origin == 'upload' %}
                                 <p>{%  trans "Uploaded" %}</p>
                             {% elif item.origin == 'api' %}
                                 <p>{%  trans "API" %}</p>
@@ -323,6 +328,9 @@
                             <ul class="actions">
                                 <li><h4>{% trans "Timing" %}: {{ item.time_change }}</h4></li>
                                 <li><h4>{% trans "Text" %}: {{ item.text_change }}</h4></li>
+                                {% if user.is_staff and perms.videos.edit_video %}
+                                    <li><h4><a style="color: #417690;" href="{% url admin:subtitles_subtitleversion_change item.pk %}">{% trans "Edit in Django Admin" %}</a></h4></li>
+                                {% endif %}
                             </ul>
                         </li>
                     {% endfor %}
@@ -333,64 +341,21 @@
         </div>
     </div>
 
-    {% if next_version and rollback_allowed %}
-        {% if last_version.moderation_status != 'waiting_moderation' %}
-            <div class="tools grid_4 alpha" id="rollback-button">
-                <a href="{% url videos:rollback last_version.pk %}" class="button" id="rollback">
-                    {% trans 'Roll back to this version' %}
-                </a>
-            </div>
-        {% endif %}
+    {% if rollback_allowed %}
+        <div class="tools grid_4 alpha" id="rollback-button">
+            <a href="{% url videos:rollback last_version.pk %}" class="button" id="rollback">
+                {% trans 'Roll back to this version' %}
+            </a>
+        </div>
     {% endif %}
 
-    {% if request.user|can_unpublish:video %}
-        {% with video.get_team_video as team_video %}
-            {% if team_video %}
-                <div class="bootstrap">
-                    <div class="modal" id="unpublish-modal">
-                        <div class="modal-header">
-                            <a href="#" class="close action-close">x</a>
-                            <h3>{% trans 'Unpublish subtitles' %}</h3>
-                        </div>
-                        <div class="modal-body">
-                            <form method="POST" action="{% url teams:unpublish slug=video.get_team_video.team.slug %}">
-                                <fieldset>
-                                    <h5>{% trans 'What would you like to unpublish?' %}</h5>
-                                    <label class="radio">
-                                        <input type="radio" name="scope" value="version" checked="checked">
-                                        {% trans 'This version only' %}
-                                    </label>
-                                    <label class="radio">
-                                        <input type="radio" name="scope" value="dependents">
-                                        {% trans 'This entire language and all dependent languages' %}
-                                        <br/>
-                                        {% trans 'Note: Any dependent languages will be unavailable until this language is reapproved.' %}
-                                    </label>
-                                </fieldset>
-
-                                {% csrf_token %}
-
-                                <input type="hidden" name="next" value="{{ request.path }}" />
-                                <input type="hidden" name="subtitle_version" value="{{ last_version.pk }}" />
-
-                                <div class="modal-footer">
-                                    <a href="#" class="btn pull-left action-close">{% trans 'Cancel' %}</a>
-                                    <button class="pull-right">{% trans 'Unpublish' %}</button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-            {% endif %}
-        {% endwith %}
-    {% endif %}
 {% endblock %}
 
 {% block page_controls %}
     {% if user.is_staff and perms.videos.edit_video %}
         <ul id="page_controls">
             <li>
-                <a href="{% url admin:subtitles_subtitlelanguage_change language.pk %}" target="blank">{% trans 'Edit Subtitles' %}</a>
+                <a href="{% url admin:subtitles_subtitlelanguage_change language.pk %}" target="blank">{% trans 'Edit SubtitleLanguage in Django Admin' %}</a>
             </li>
         </ul>
     {% endif %}

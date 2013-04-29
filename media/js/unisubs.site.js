@@ -506,6 +506,14 @@ var Site = function(Site) {
                 $.cookie('hide-yt-prompt', 'yes', { path: '/', expires: 365 });
                 return false;
             });
+
+            if ($('select[name="admin-edit-specific-version"]').length) {
+                var $versionSelect = $('select[name="admin-edit-specific-version"]');
+
+                $versionSelect.change(function() {
+                    window.location = $versionSelect.val();
+                });
+            }
         },
 
         // Public

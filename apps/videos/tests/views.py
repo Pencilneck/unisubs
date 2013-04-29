@@ -21,19 +21,25 @@ from datetime import datetime
 import json
 from BeautifulSoup import BeautifulSoup
 
-from babelsubs.storage import SubtitleSet
+from babelsubs.storage import SubtitleSet, diff
 from django.core import mail
 from django.core.cache import cache
 from django.core.urlresolvers import reverse
 from django.db.models import ObjectDoesNotExist
+from django.test import TestCase
 from vidscraper.sites import blip
 
 from apps.auth.models import CustomUser as User
+from apps.subtitles import pipeline
+from apps.teams.models import Task
+from apps.teams.permissions_const import ROLE_ADMIN
 from apps.videos.share_utils import _make_email_url
 from apps.videos.tasks import video_changed_tasks
+from apps.videos.templatetags.subtitles_tags import format_sub_time
 from apps.videos.tests.videotestutils import (
     WebUseTest, create_langs_and_versions
 )
+from apps.videos.views import LanguageList, LanguageListItem
 from apps.videos.models import (
     Video, VideoUrl, Action, VIDEO_TYPE_YOUTUBE, SubtitleVersion,
     SubtitleLanguage, Subtitle, UserTestResult
@@ -43,7 +49,7 @@ from apps.videos.tests.data import (
 )
 from apps.widget import video_cache
 from apps.widget.tests import create_two_sub_session, RequestMockup
-
+from utils import test_factories
 
 class TestViews(WebUseTest):
     fixtures = ['test.json', 'subtitle_fixtures.json']
@@ -345,52 +351,78 @@ class TestViews(WebUseTest):
         self.client.get(reverse('videos:rollback', args=[en2.id]))
         _assert_tip_subs([(1, 2, 'foo')])
 
-        self.assertEqual(sl_en.subtitleversion_set.count(), 4)
+        self.assertEqual(sl_en.subtitleversion_set.full().count(), 4)
 
     def test_diffing(self):
         create_langs_and_versions(self.video, ['en'])
 
         eng = self.video.newsubtitlelanguage_set.get(language_code='en')
-        subtitles = SubtitleSet('en')
-
-        for x in xrange(0, 3):
-            subtitles.append_subtitle(x * 1000, x * 2000, "%x - :D" % x)
-
+        subtitles = SubtitleSet.from_list('en', [
+            (10000, 20000, "1 - :D"),
+            (20000, 30000, "2 - :D"),
+            (30000, 40000, "3 - :D"),
+            (40000, 50000, "4 - :D"),
+            (50000, 60000, "5 - :D"),
+        ])
+        subtitles2 = SubtitleSet.from_list('en', [
+            (10000, 20000, "1 - :D"),
+            (20000, 25000, "2 - :D"), # time change,
+            (30000, 40000, "Three - :D"), # text change,
+            # multiple lines replaced by a single line
+            (40000, 60000, "45 - :D"),
+        ])
         first_version = eng.add_version(subtitles=subtitles)
-
-        subs_data = []
-        for x in xrange(0, 3):
-            subs_data.append([x * 1000, x * 2000, "%x - :D" % x])
-        # change the timing at the second sub:
-        subs_data[1][0] = subs_data[1][0] + 200
-        # change the text on the thrid sub
-        subs_data[1][2] = 'changed'
-        # add an unsynced sub
-        subs_data.append([None, None, "no sync"])
-        second_version = eng.add_version(subtitles=SubtitleSet.from_list('en', subs_data))
-
+        second_version = eng.add_version(subtitles=subtitles2)
+        # Note on the argument order to diff: we always diff the more recent
+        # version against the less recent
+        diff_result = diff(subtitles2, subtitles)
 
         response = self._simple_test('videos:diffing', [first_version.id, second_version.id])
-        self.assertEqual(len(response.context['diff_data']['subtitle_data']), len(subs_data))
+        self.assertEquals(diff_result, response.context['diff_data'])
+
+        diff_sub_data = diff_result['subtitle_data']
 
         html = BeautifulSoup(response.content)
-        # this is the unsynced sub:
-        unsynced = html.findAll("span", attrs={"class":'time-span'})
-        self.assertEqual(unsynced[0].parent.findAll("span", "no-sync")[0].text, 'Not Synced')
-        self.assertEqual(len(unsynced), 1)
-        # this are synced subs
-        synced  = html.findAll("span", attrs={"class":'time-span time-link'})
-        first_version_table = html.findAll('table', attrs={"class":'diff_subtitle_list diff_version_0'})[0]
-        subs_in_first_table = first_version_table.findAll('td')
-        # check that first version is well represented
-        self.assertEqual(len(subs_in_first_table), first_version.subtitle_count)
+        diff_list = html.find('ol', {"class":'subtitles-diff'})
+        diff_items = diff_list.findAll('li')
+        # check number of lines
+        self.assertEquals(len(diff_items), len(diff_sub_data))
+        def check_column_data(column, sub_data):
+            """Check the data in the HTML for a column against the data in
+            from diff()
+            """
+            # special check for empty lines
+            if sub_data.text is None:
+                self.assertEquals(column.string.strip(), "")
+                return
+            time_span, text_span = column.findAll('span', recursive=False)
+            self.assertEquals(text_span.string.strip(),
+                              sub_data.text)
+            time_child_spans = time_span.findAll('span',
+                                                 {'class': 'stamp_text'})
+            self.assertEquals(time_child_spans[0].string.strip(),
+                              format_sub_time(sub_data.start_time))
+            self.assertEquals(time_child_spans[1].string.strip(),
+                              format_sub_time(sub_data.end_time))
 
-        # now second version
-        second_version_table = html.findAll('table', attrs={"class":'diff_subtitle_list diff_version_1'})[0]
-        subs_in_second_table = second_version_table.findAll('td')
-        # check that second version is represented
-        self.assertEqual(len(subs_in_second_table), second_version.subtitle_count)
-        self.assertNotEqual(len(subs_in_first_table), len(subs_in_second_table))
+        for li, diff_sub_data_item in zip(diff_items, diff_sub_data):
+            # Intuitively, left_column should be compared against
+            # ['subtitles'][0], but we do the opposite.  This is because of
+            # the way things are ordered:
+            #  - diff() was passed (older_version, newer_version)
+            #  - The rendered HTML has the newer version on the left and the
+            #  older version on the right
+            check_column_data(li.find('div', {'class': 'left_column'}),
+                              diff_sub_data_item['subtitles'][1])
+            check_column_data(li.find('div', {'class': 'right_column'}),
+                              diff_sub_data_item['subtitles'][0])
+            # we use the time_change class for either text or time changes.
+            time_changes = li.findAll('span', {'class': 'time_change'})
+            if (diff_sub_data_item['time_changed'] or
+                diff_sub_data_item['text_changed']):
+                self.assertNotEqual(len(time_changes), 0)
+            else:
+                self.assertEquals(len(time_changes), 0)
 
     def test_test_form_page(self):
         self._simple_test('videos:test_form_page')
@@ -443,3 +475,154 @@ class TestViews(WebUseTest):
             response = self.client.post(url)
             self.assertEqual(response.status_code, 200)
 
+
+class MakeLanguageListTestCase(TestCase):
+    def setUp(self):
+        self.video = test_factories.create_video(
+            primary_audio_language_code='en')
+
+    def setup_team(self):
+        self.team = test_factories.create_team(workflow_enabled=True)
+        workflow = self.team.get_workflow()
+        workflow.review_allowed = workflow.REVIEW_IDS['Admin must review']
+        workflow.approve_allowed = workflow.APPROVE_IDS['Admin must approve']
+        workflow.save()
+        self.user = test_factories.create_team_member(self.team).user
+        self.team_video = test_factories.create_team_video(self.team,
+                                                           self.user,
+                                                           self.video)
+
+    def add_completed_subtitles(self, language, subtitles, **kwargs):
+        language = self.add_not_completed_subtitles(language, subtitles,
+                                                    **kwargs)
+        language.subtitles_complete = True
+        language.save()
+        return language
+
+    def add_not_completed_subtitles(self, language, subtitles, **kwargs):
+        v = pipeline.add_subtitles(self.video, language, subtitles, **kwargs)
+        return v.subtitle_language
+
+    def test_original(self):
+        lang = self.add_completed_subtitles('en', [
+            (0, 1000, "Hello, ", {'new_paragraph':True}),
+            (1500, 2500, "World"),
+        ])
+        self.assertEquals(LanguageList(self.video).items, [
+            ('English', 'complete', ['original'], lang.get_absolute_url()),
+        ])
+
+    def test_original_incomplete(self):
+        lang = self.add_not_completed_subtitles('en', [
+            (0, 1000, "Hello, ", {'new_paragraph':True}),
+            (1500, 2500, "World"),
+        ])
+        self.assertEquals(LanguageList(self.video).items, [
+            ('English', 'incomplete', ['original', 'incomplete'],
+             lang.get_absolute_url()),
+        ])
+
+    def test_complete(self):
+        lang = self.add_completed_subtitles('ar', [
+            (0, 1000, "Hello, ", {'new_paragraph':True}),
+            (1500, 2500, "World"),
+        ])
+        self.assertEquals(LanguageList(self.video).items, [
+            ('Arabic', 'complete', [], lang.get_absolute_url()),
+        ])
+
+    def test_not_marked_complete(self):
+        lang = self.add_not_completed_subtitles('fr', [
+            (0, 1000, "Hello, ", {'new_paragraph':True}),
+            (1500, 2500, "World"),
+        ])
+        self.assertEquals(LanguageList(self.video).items, [
+            ('French', 'incomplete', ['incomplete'], lang.get_absolute_url()),
+        ])
+
+    def test_timing_incomplete(self):
+        lang = self.add_not_completed_subtitles('ja', [
+            (0, 1000, "Hello, ", {'new_paragraph':True}),
+            (None, None, "World"),
+        ])
+        self.assertEquals(LanguageList(self.video).items, [
+            ('Japanese', 'needs-timing', ['incomplete'], lang.get_absolute_url()),
+        ])
+
+    def test_needs_review(self):
+        self.setup_team()
+        # go through the subtitle task phase
+        task = Task(team=self.team, team_video=self.team_video,
+             language='tr', type=Task.TYPE_IDS['Subtitle'],
+             assignee=self.user)
+        lang = self.add_completed_subtitles('tr', [
+            (0, 1000, "Hello, ", {'new_paragraph':True}),
+            (1500, 2500, "World"),
+        ], visibility='private')
+        task.new_subtitle_version = lang.get_tip(public=False)
+        review_task = task.complete()
+        # now in the review phase
+        self.assertEquals(review_task.type, Task.TYPE_IDS['Review'])
+        self.assertEquals(LanguageList(self.video).items, [
+            ('Turkish', 'needs-review', ['needs review'], lang.get_absolute_url()),
+        ])
+
+    def test_needs_approval(self):
+        self.setup_team()
+        # go through the subtitle task phase
+        task = Task(team=self.team, team_video=self.team_video,
+             language='tr', type=Task.TYPE_IDS['Subtitle'],
+             assignee=self.user)
+        lang = self.add_completed_subtitles('tr', [
+            (0, 1000, "Hello, ", {'new_paragraph':True}),
+            (1500, 2500, "World"),
+        ], visibility='private')
+        task.new_subtitle_version = lang.get_tip(public=False)
+        review_task = task.complete()
+        # go through the review phase
+        self.assertEquals(review_task.type, Task.TYPE_IDS['Review'])
+        review_task.assignee = self.user
+        review_task.approved = Task.APPROVED_IDS['Approved']
+        approve_task = review_task.complete()
+        # now in the approval phase
+        self.assertEquals(approve_task.type, Task.TYPE_IDS['Approve'])
+        self.assertEquals(LanguageList(self.video).items, [
+            ('Turkish', 'needs-review', ['needs approval'], lang.get_absolute_url()),
+        ])
+
+    def test_no_lines(self):
+        pipeline.add_subtitles(self.video, 'pt', None)
+        self.assertEquals(LanguageList(self.video).items, [ ])
+
+    def test_multiple_languages(self):
+        # english is the original, completed language
+        en = self.add_completed_subtitles('en', [
+            (0, 1000, "Hello, ", {'new_paragraph':True}),
+            (1500, 2500, "World"),
+        ])
+        # Kurdish is completed
+        ar = self.add_completed_subtitles('ar', [
+            (0, 1000, "Hello, ", {'new_paragraph':True}),
+            (1500, 2500, "World"),
+        ])
+        # french is incomplete
+        fr = self.add_not_completed_subtitles('fr', [
+            (0, 1000, "Hello, ", {'new_paragraph':True}),
+            (1500, 2500, "World"),
+        ])
+        # japanese is incomplete, and timing is missing
+        ja = self.add_not_completed_subtitles('ja', [
+            (0, 1000, "Hello, ", {'new_paragraph':True}),
+            (None, None, "World"),
+        ])
+        # portuguese shouldn't be listed because there are no lines
+        pipeline.add_subtitles(self.video, 'pt', None)
+
+        # LanguageList should return lines for all the languages, with
+        # the original first, then the rest in alphabetical order.
+        self.assertEquals(LanguageList(self.video).items, [
+            ('English', 'complete', ['original'], en.get_absolute_url()),
+            ('Arabic', 'complete', [], ar.get_absolute_url()),
+            ('French', 'incomplete', ['incomplete'], fr.get_absolute_url()),
+            ('Japanese', 'needs-timing', ['incomplete'], ja.get_absolute_url()),
+        ])

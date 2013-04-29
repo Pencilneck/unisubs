@@ -17,6 +17,7 @@
 # http://www.gnu.org/licenses/agpl-3.0.html.
 
 import chardet
+from itertools import izip
 
 import babelsubs
 from django import forms
@@ -26,6 +27,7 @@ from django.utils.translation import ugettext_lazy as _
 from apps.subtitles import pipeline
 from apps.subtitles.shims import is_dependent
 from apps.subtitles.models import ORIGIN_UPLOAD
+from apps.teams.models import Task
 from apps.teams.permissions import (
     can_perform_task, can_create_and_edit_subtitles,
     can_create_and_edit_translations
@@ -86,7 +88,7 @@ class SubtitlesUploadForm(forms.Form):
 
     def _verify_no_translation_conflict(self, subtitle_language,
                                         from_language_code):
-        existing_from_language =  subtitle_language.get_translation_source_language()
+        existing_from_language = subtitle_language.get_translation_source_language()
         existing_from_language_code = (
             existing_from_language and existing_from_language.language_code) or ''
 
@@ -142,7 +144,7 @@ class SubtitlesUploadForm(forms.Form):
                                                  language_code):
         tasks = team_video.task_set.incomplete_review_or_approve().filter(
             language=language_code
-        )
+        ).exclude(assignee=self.user).exclude(assignee__isnull=True)
 
         if tasks.exists():
             raise forms.ValidationError(_(
@@ -151,8 +153,20 @@ class SubtitlesUploadForm(forms.Form):
 
     def _verify_team_policies(self, team_video, language_code,
                               from_language_code):
-        is_transcription = (not from_language_code)
+        # if this is being saved as part of a task, than permissions mean
+        # something else. For example a team might require admins to transcribe
+        # but if it allows managers to review, then saves done as part of a review
+        # task can be done by a manager (nice huh?)
+        possible_task_languages = [language_code, '']
+        try:
+            # If a task exist, we should let permissions be checked by _verify_no_blocking_review...
+            # so don't bother with assignment
+            team_video.task_set.incomplete_review_or_approve().filter(language__in=possible_task_languages).exists()
+            return
+        except Task.DoesNotExist:
+            pass
 
+        is_transcription = (not from_language_code)
         if is_transcription:
             allowed = can_create_and_edit_subtitles(self.user, team_video,
                                                     language_code)
@@ -172,9 +186,7 @@ class SubtitlesUploadForm(forms.Form):
 
     def _verify_translation_subtitle_counts(self, from_language_code):
         if from_language_code:
-            from_sl = self.video.subtitle_language(from_language_code)
-
-            from_count = len(from_sl.get_tip(public=True).get_subtitles())
+            from_count = len(self.from_sv.get_subtitles())
             current_count = len(self._parsed_subtitles.get_subtitles())
 
             if current_count > from_count:
@@ -233,6 +245,16 @@ class SubtitlesUploadForm(forms.Form):
         from_language_code = self.cleaned_data.get('from_language_code')
         language_code = self.cleaned_data['language_code']
         subtitle_language = self.video.subtitle_language(language_code)
+
+        if from_language_code:
+            # If this is a translation, we'll retrieve the source
+            # language/version here so we can use it later.
+            sl = self.video.subtitle_language(from_language_code)
+            self.from_sl = sl
+            self.from_sv = sl.get_tip(public=True) if sl else None
+        else:
+            self.from_sl = None
+            self.from_sv = None
 
         # If this SubtitleLanguage already exists, we need to verify a few
         # things about it before we let the user upload a set of subtitles to
@@ -313,7 +335,7 @@ class SubtitlesUploadForm(forms.Form):
 
         if from_language_code:
             from_language = self.video.subtitle_language(from_language_code)
-            from_version = from_language.get_tip(public=True)
+            from_version = from_language.get_tip(full=True)
             parents = [from_version]
 
         return parents
@@ -334,16 +356,33 @@ class SubtitlesUploadForm(forms.Form):
         from_language_code = self.cleaned_data['from_language_code']
         complete = self.cleaned_data['complete']
 
-        # No matter what, txt cannot be complete because they don't have timing
-        # data.
-        if self.extension == 'txt':
-            complete = False
+
+        subtitles = self._parsed_subtitles
+        if from_language_code:
+            # If this is a translation, its subtitles should use the timing data
+            # from the source.  We know that the source has at least as many
+            # subtitles as the new version, so we can just match them up
+            # first-come, first-serve.
+            source_subtitles = self.from_sv.get_subtitles()
+            i = 0
+            # instead of translating to subtitle_items, we're updating the
+            # dfxp elements in place. This guarantees no monkey business with
+            # escaping / styling
+            for old, new in izip(source_subtitles.subtitle_items(), subtitles.get_subtitles()):
+                subtitles.update(i, from_ms=old.start_time, to_ms=old.end_time)
+                i += 1
+        else:
+            # Otherwise we can just use the subtitles the user uploaded as-is.
+            # No matter what, text files that aren't translations cannot be
+            # complete because they don't have timing data.
+            if self.extension == 'txt':
+                complete = False
 
         title, description = self._find_title_description(language_code)
         parents = self._find_parents(from_language_code)
 
         version = pipeline.add_subtitles(
-            self.video, language_code, self._parsed_subtitles,
+            self.video, language_code, subtitles,
             title=title, description=description, author=self.user,
             parents=parents, committer=self.user, complete=complete,
             origin=ORIGIN_UPLOAD)

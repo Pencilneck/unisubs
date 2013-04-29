@@ -10,7 +10,7 @@ successful_pull=""
 set +e
 
 for retry in 1 2 3 4 5; do
-   git pull
+   git pull --ff-only
    rc="$?"
 
    if [ "$rc" = "0" ]; then

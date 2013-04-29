@@ -16,7 +16,7 @@
         </ul>
         <ul class="providers additional">
             <li><a class="provider" id="ted" href="{{ ted_auth.url }}">ted</a></li>
-            <li><a class="provider" id="coursera" href="{{ stanford_auth.url }}">coursera</a></li>
+            <li><a class="provider" id="udacity" href="{% url socialauth_udacity_login %}?next={{ next }}">udacity</a></li>
         </ul>
         {% comment %}<p class="toggle-additional"><a href="">{% trans "Show more providers" %}</a></p>{% endcomment %}
     </div>

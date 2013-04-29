@@ -131,7 +131,18 @@ def youtube_oauth_callback(request):
                 })
                     
     content = json.loads(response.content)
-    bridge = YouTubeApiBridge(content['access_token'], content['refresh_token'], None) 
+    if content.get('error', None):
+        logger.error("Error on requesting Youtube Oauth token", extra={
+                    "data": {
+                        "sent_params": params,
+                        "original_request": request,
+                        "response": response.content
+                    },
+                })
+        error = content.get('error')
+        messages.error(request, 'Youtube said: "%s"' % error)
+        return redirect('profiles:account')
+    bridge = YouTubeApiBridge(content['access_token'], content['refresh_token'], None)
 
     try:
         feed = bridge.get_user_profile(username='default')

@@ -374,7 +374,7 @@ class TestCaseTasksEnabledDashboard(WebdriverTestCase):
         self.dashboard_tab.open_team_page(self.team.slug)
         self.dashboard_tab.click_lang_task(video.title, 
                                           'Create French subtitles')
-        self.create_modal.lang_selection(video_language='English')
+        self.create_modal.lang_selection()
         self.assertEqual('Typing', self.sub_editor.dialog_title())
 
 

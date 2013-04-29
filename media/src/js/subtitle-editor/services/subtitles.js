@@ -53,6 +53,24 @@ var angular = angular || null;
         var authHeaders = cachedData.authHeaders;
 
         return {
+            approveTask: function(response, notes) {
+
+                var url = getTaskSaveAPIUrl(cachedData.team_slug, cachedData.task_id);
+
+                var promise = $http({
+                    method: 'PUT',
+                    url: url,
+                    headers: authHeaders,
+                    data:  {
+                        complete: true,
+                        body: notes,
+                        version_number: response.data.version_number
+                    }
+                });
+
+                return promise;
+
+            },
             getCachedData: function() {
                 return cachedData;
             },
@@ -72,6 +90,21 @@ var angular = angular || null;
                 } else {
                     callback(cachedData.languages);
                 }
+            },
+            getLanguageMap: function(callback) {
+
+                // If the language map doesn't exist in our cached data, ask the API.
+                if (!cachedData.languageMap) {
+                    $http.get('/api2/partners/languages/').success(function(response) {
+                        cachedData.languageMap = response.languages;
+                        callback(cachedData.languageMap);
+                    });
+
+                // If we have a cached language map, just call the callback.
+                } else {
+                    callback(cachedData.languageMap);
+                }
+
             },
             getSubtitles: function(languageCode, versionNumber, callback){
 
@@ -125,27 +158,11 @@ var angular = angular || null;
                     });
                 }
             },
-            getVideoURL: function() {
-                return cachedData.video.videoURL;
+            getPrimaryVideoURL: function() {
+                return cachedData.video.primaryVideoURL;
             },
-
-            approveTask: function(response, notes) {
-
-                var url = getTaskSaveAPIUrl(cachedData.team_slug, cachedData.task_id);
-
-                var promise = $http({
-                    method: 'PUT',
-                    url: url,
-                    headers: authHeaders,
-                    data:  {
-                        complete: true,
-                        notes: notes,
-                        version_number: response.data.version_number
-                    }
-                });
-
-                return promise;
-
+            getVideoURLs: function() {
+                return cachedData.video.videoURLs;
             },
             sendBackTask: function(response, notes) {
 
@@ -186,7 +203,6 @@ var angular = angular || null;
 
                 return promise;
             }
-
         };
     });
     module.factory('SubtitleListFinder', function($http) {

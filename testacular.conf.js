@@ -9,7 +9,7 @@ basePath = 'media/src/js';
 files = [
     JASMINE,
     JASMINE_ADAPTER,
-    'third-party/amara-jquery-1.8.2.min.js',
+    'third-party/amara-jquery.min.js',
     'dfxp/sample.dfxp.xml.js',
     'dfxp/dfxp.js',
     'tests/dfxp.tests.js'

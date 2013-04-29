@@ -1,5 +1,5 @@
 /*
- * popcorn.js version 879399e
+ * popcorn.js version e72c167
  * http://popcornjs.org
  *
  * Copyright 2011, Mozilla Foundation
@@ -100,7 +100,7 @@
   };
 
   //  Popcorn API version, automatically inserted via build system.
-  Popcorn.version = "879399e";
+  Popcorn.version = "e72c167";
 
   //  Boolean flag allowing a client to determine if Popcorn can be supported
   Popcorn.isSupported = true;
@@ -1379,6 +1379,7 @@
 
   // Internal Only - Adds track events to the instance object
   Popcorn.addTrackEvent = function( obj, track ) {
+    var temp;
 
     if ( track instanceof TrackEvent ) {
       return;
@@ -1391,7 +1392,14 @@
     if ( track && track._natives && track._natives.type &&
         ( obj.options.defaults && obj.options.defaults[ track._natives.type ] ) ) {
 
-      track = Popcorn.extend( {}, obj.options.defaults[ track._natives.type ], track );
+      // To ensure that the TrackEvent Invariant Policy is enforced,
+      // First, copy the properties of the newly created track event event
+      // to a temporary holder
+      temp = Popcorn.extend( {}, track );
+
+      // Next, copy the default onto the newly created trackevent, followed by the
+      // temporary holder.
+      Popcorn.extend( track, obj.options.defaults[ track._natives.type ], temp );
     }
 
     if ( track._natives ) {
@@ -2332,18 +2340,18 @@
   var rparams = /\?/,
   //  XHR Setup object
   setup = {
+    ajax: null,
     url: "",
     data: "",
     dataType: "",
     success: Popcorn.nop,
     type: "GET",
     async: true,
-    xhr: function() {
-      return new global.XMLHttpRequest();
-    }
+    contentType: "application/x-www-form-urlencoded; charset=UTF-8"
   };
 
   Popcorn.xhr = function( options ) {
+    var settings;
 
     options.dataType = options.dataType && options.dataType.toLowerCase() || null;
 
@@ -2358,10 +2366,12 @@
       return;
     }
 
-    var settings = Popcorn.extend( {}, setup, options );
+    //  Merge the "setup" defaults and custom "options"
+    //  into a new plain object.
+    settings = Popcorn.extend( {}, setup, options );
 
     //  Create new XMLHttpRequest object
-    settings.ajax  = settings.xhr();
+    settings.ajax = new XMLHttpRequest();
 
     if ( settings.ajax ) {
 
@@ -2374,8 +2384,16 @@
         settings.data = null;
       }
 
-
+      //  Open the request
       settings.ajax.open( settings.type, settings.url, settings.async );
+
+      //  For POST, set the content-type request header
+      if ( settings.type === "POST" ) {
+        settings.ajax.setRequestHeader(
+          "Content-Type", settings.contentType
+        );
+      }
+
       settings.ajax.send( settings.data || null );
 
       return Popcorn.xhr.httpData( settings );
@@ -3142,7 +3160,7 @@
         // We leave HTMLVideoElement and HTMLAudioElement wrappers out
         // of the mix, since we'll default to HTML5 video if nothing
         // else works.  Waiting on #1254 before we add YouTube to this.
-        wrappers = "HTMLVimeoVideoElement HTMLSoundCloudAudioElement HTMLNullVideoElement".split(" ");
+        wrappers = "NetflixVideoElement HTMLFlashFallbackVideoElement HTMLVimeoVideoElement HTMLSoundCloudAudioElement HTMLNullVideoElement".split(" ");
 
     if ( !node ) {
       Popcorn.error( "Specified target `" + target + "` was not found." );
@@ -4097,9 +4115,10 @@
   // We currently support simple temporal fragments:
   //   #t=,100   -- a null video of 100s (starts at 0s)
   //   #t=5,100  -- a null video of 100s, which starts at 5s (i.e., 95s duration)
-  temporalRegex = /#t=(\d+)?,?(\d+)?/;
+  temporalRegex = /#t=(\d+\.?\d*)?,?(\d+\.?\d*)/;
 
   function NullPlayer( options ) {
+    this.startTime = 0;
     this.currentTime = options.currentTime || 0;
     this.duration = options.duration || NaN;
     this.playInterval = null;
@@ -4108,12 +4127,12 @@
   }
 
   function nullPlay( video ) {
-    if( video.currentTime + DEFAULT_UPDATE_RESOLUTION_S >= video.duration ) {
+    video.currentTime += ( Date.now() - video.startTime ) / 1000;
+    video.startTime = Date.now();
+    if( video.currentTime >= video.duration ) {
       video.currentTime = video.duration;
       video.pause();
       video.ended();
-    } else {
-      video.currentTime += DEFAULT_UPDATE_RESOLUTION_S;
     }
   }
 
@@ -4123,6 +4142,7 @@
       var video = this;
       if ( this.paused ) {
         this.paused = false;
+        this.startTime = Date.now();
         this.playInterval = setInterval( function() { nullPlay( video ); },
                                          DEFAULT_UPDATE_RESOLUTION_MS );
       }
@@ -4248,8 +4268,8 @@
 
       // Parse out the start and duration, if specified
       var fragments = temporalRegex.exec( aSrc ),
-          start = fragments[ 1 ],
-          duration = fragments [ 2 ];
+          start = +fragments[ 1 ],
+          duration = +fragments[ 2 ];
 
       player = new NullPlayer({
         currentTime: start,
@@ -4513,7 +4533,7 @@
 
   // Helper for identifying URLs we know how to play.
   HTMLNullVideoElement.prototype._canPlaySrc = function( url ) {
-    return ( /#t=\d*,?\d+?/ ).test( url ) ?
+    return ( temporalRegex ).test( url ) ?
       "probably" :
       EMPTY_STRING;
   };
@@ -4980,7 +5000,8 @@
           "&sharing=false" +
           "&download=false" +
           "&show_comments=false" +
-          "&show_user=false";
+          "&show_user=false" +
+          "&single_active=false";
       });
     }
 
@@ -5906,11 +5927,15 @@
       },
       playerReady = false,
       catchRoguePauseEvent = false,
+      catchRoguePlayEvent = false,
       mediaReady = false,
       loopedPlay = false,
       player,
       playerPaused = true,
       mediaReadyCallbacks = [],
+      playerState = -1,
+      bufferedInterval,
+      lastLoadedFraction = 0,
       currentTimeInterval,
       timeUpdateInterval,
       firstPlay = true;
@@ -5928,7 +5953,23 @@
     }
 
     function onPlayerReady( event ) {
+      var onMuted = function() {
+        if ( player.isMuted() ) {
+          // force an initial play on the video, to remove autostart on initial seekTo.
+          player.playVideo();
+        } else {
+          setTimeout( onMuted, 0 );
+        }
+      };
       playerReady = true;
+      // XXX: this should really live in cued below, but doesn't work.
+
+      // Browsers using flash will have the pause() call take too long and cause some
+      // sound to leak out. Muting before to prevent this.
+      player.mute();
+
+      // ensure we are muted.
+      onMuted();
     }
 
     function getDuration() {
@@ -5995,18 +6036,6 @@
     function onPlayerStateChange( event ) {
       switch( event.data ) {
 
-        // unstarted
-        case -1:
-          // XXX: this should really live in cued below, but doesn't work.
-
-          // Browsers using flash will have the pause() call take too long and cause some
-          // sound to leak out. Muting before to prevent this.
-          player.mute();
-
-          // force an initial play on the video, to remove autostart on initial seekTo.
-          player.playVideo();
-          break;
-
         // ended
         case YT.PlayerState.ENDED:
           onEnded();
@@ -6022,10 +6051,16 @@
             // fake ready event
             firstPlay = false;
 
+            addMediaReadyCallback(function() {
+              bufferedInterval = setInterval( monitorBuffered, 50 );
+            });
+
             // Set initial paused state
             if( impl.autoplay || !impl.paused ) {
               impl.paused = false;
-              addMediaReadyCallback( function() { onPlay(); } );
+              addMediaReadyCallback(function() {
+                onPlay();
+              });
             } else {
               // if a pause happens while seeking, ensure we catch it.
               // in youtube seeks fire pause events, and we don't want to listen to that.
@@ -6060,6 +6095,9 @@
             // We can't easily determine canplaythrough, but will send anyway.
             impl.readyState = self.HAVE_ENOUGH_DATA;
             self.dispatchEvent( "canplaythrough" );
+          } else if ( catchRoguePlayEvent ) {
+            catchRoguePlayEvent = false;
+            player.pauseVideo();
           } else {
             onPlay();
           }
@@ -6087,6 +6125,13 @@
           // XXX: cued doesn't seem to fire reliably, bug in youtube api?
           break;
       }
+
+      if ( event.data !== YT.PlayerState.BUFFERING &&
+           playerState === YT.PlayerState.BUFFERING ) {
+        onProgress();
+      }
+
+      playerState = event.data;
     }
 
     function destroyPlayer() {
@@ -6094,6 +6139,7 @@
         return;
       }
       clearInterval( currentTimeInterval );
+      clearInterval( bufferedInterval );
       player.stopVideo();
       player.clearVideo();
 
@@ -6162,7 +6208,7 @@
       impl.controls = playerVars.controls;
 
       // Set wmode to transparent to show video overlays
-      playerVars.wmode = playerVars.wmode || "transparent";
+      playerVars.wmode = playerVars.wmode || "opaque";
 
       // Get video ID out of youtube url
       aSrc = regexYouTube.exec( aSrc )[ 1 ];
@@ -6199,6 +6245,20 @@
         }
       } else if ( ABS( playerTime - impl.currentTime ) < 1 ) {
         onSeeked();
+      }
+    }
+
+    function monitorBuffered() {
+      var fraction = player.getVideoLoadedFraction();
+
+      if ( lastLoadedFraction !== fraction ) {
+        lastLoadedFraction = fraction;
+
+        onProgress();
+
+        if ( fraction >= 1 ) {
+          clearInterval( bufferedInterval );
+        }
       }
     }
 
@@ -6250,6 +6310,7 @@
       }
       timeUpdateInterval = setInterval( onTimeUpdate,
                                         self._util.TIMEUPDATE_MS );
+      impl.paused = false;
 
       if( playerPaused ) {
         playerPaused = false;
@@ -6263,6 +6324,10 @@
       }
     }
 
+    function onProgress() {
+      self.dispatchEvent( "progress" );
+    }
+
     self.play = function() {
       impl.paused = false;
       if( !mediaReady ) {
@@ -6273,6 +6338,7 @@
     };
 
     function onPause() {
+      impl.paused = true;
       if ( !playerPaused ) {
         playerPaused = true;
         clearInterval( timeUpdateInterval );
@@ -6300,6 +6366,8 @@
       } else {
         impl.ended = true;
         onPause();
+        // YouTube will fire a Playing State change after the video has ended, causing it to loop.
+        catchRoguePlayEvent = true;
         self.dispatchEvent( "timeupdate" );
         self.dispatchEvent( "ended" );
       }
@@ -6452,6 +6520,45 @@
       error: {
         get: function() {
           return impl.error;
+        }
+      },
+
+      buffered: {
+        get: function () {
+          var timeRanges = {
+            start: function( index ) {
+              if ( index === 0 ) {
+                return 0;
+              }
+
+              //throw fake DOMException/INDEX_SIZE_ERR
+              throw "INDEX_SIZE_ERR: DOM Exception 1";
+            },
+            end: function( index ) {
+              var duration;
+              if ( index === 0 ) {
+                duration = getDuration();
+                if ( !duration ) {
+                  return 0;
+                }
+
+                return duration * player.getVideoLoadedFraction();
+              }
+
+              //throw fake DOMException/INDEX_SIZE_ERR
+              throw "INDEX_SIZE_ERR: DOM Exception 1";
+            }
+          };
+
+          Object.defineProperties( timeRanges, {
+            length: {
+              get: function() {
+                return 1;
+              }
+            }
+          });
+
+          return timeRanges;
         }
       }
     });

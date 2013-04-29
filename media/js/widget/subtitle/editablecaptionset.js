@@ -102,7 +102,26 @@ unisubs.subtitle.EditableCaptionSet.prototype.needsTranslation = function() {
     return this.x['needsAnyTranscribed']();
 };
 unisubs.subtitle.EditableCaptionSet.prototype.resetSubs = function() {
+    var that = this;
     this.x['resetSubtitles']();
+    var caption;
+    var newCaptions = [];
+    // since subtitles might have been removed, we need to recreate
+    // the entire captions_ array, and be sure we have the right
+    // xml node and prev and nex set for each of them.
+    goog.array.forEach(this.x['getSubtitles'](), function(node, i) {
+            caption = that.captions_[i];
+            if (!caption){
+                caption = new unisubs.subtitle.EditableCaption(node, that.x);
+                caption.setParentEventTarget(that);
+            }else{
+                that.captions_[i].node = node;
+
+            }
+            newCaptions[i] = caption;
+    }, this);
+    this.captions_ = newCaptions;
+    this.setPreviousAndNextCaptions();
     this.dispatchEvent(
         unisubs.subtitle.EditableCaptionSet.EventType.RESET_SUBS);
 };
@@ -135,8 +154,8 @@ unisubs.subtitle.EditableCaptionSet.prototype.identicalTo = function(otherCaptio
     return true;
 };
 unisubs.subtitle.EditableCaptionSet.prototype.addNewDependentSubtitle = function(originalNode, dfxpWrapper, atIndex) {
-    var newNode = dfxpWrapper['cloneSubtitle'](originalNode,false);
-    var c = this.insertCaption(atIndex, newNode);
+    var $newNode = dfxpWrapper['cloneSubtitle'](originalNode,false);
+    var c = this.insertCaption(atIndex, $newNode['get'](0));
     return c;
 };
 
@@ -152,16 +171,16 @@ unisubs.subtitle.EditableCaptionSet.prototype.insertCaption = function(atIndex, 
         prevSub = nextSub.getPreviousCaption();
     }
     var c;
-    if (newNode){
+    if (newNode) {
         // if you are adding subs that are in the source language
         // but not the translated one, you want to keep the node
         // as it can have other content
         this.x['addSubtitleNode'](newNode, atIndex);
         c = new unisubs.subtitle.EditableCaption(newNode, this.x);
-    }else{
+    } else {
         // no node, you just want to add an 'empty' subtitle
         c = new unisubs.subtitle.EditableCaption(this.x['addSubtitle'](
-            atIndex >= 1 ? atIndex  -1 : -1, {}, ""), this.x);
+            atIndex >= 1 ? atIndex - 1 : -1, {}, ""), this.x);
     }
     unisubs.SubTracker.getInstance().trackAdd(c.getCaptionIndex());
     goog.array.insertAt(this.captions_, c, atIndex );
@@ -187,33 +206,50 @@ unisubs.subtitle.EditableCaptionSet.prototype.setTimesOnInsertedSub_ = function(
     // Else, we take the time interval between the prevSub.startTime and nextSub.endTime
     // and divide by 3, that's the duration of each of the subs now..
 
-    if (!nextSub.needsSync() && !prevSub.needsSync()){
-        // both are synced we can set actual time values for the new one
-         var gap = nextSub.getStartTime() - prevSub.getEndTime();
-        if (gap > 500){
-            // gap is enough to fit in a sub between it
-            insertedSub.setStartTime(prevSub.getEndTime());
-            insertedSub.setEndTime(nextSub.getStartTime());
-            return;
-        }
-        // no gap enough, so we need to divide times:
-        var initialTime = prevSub.getStartTime();
-        var finalTime = nextSub.getEndTime();
-        if (finalTime == -1){
-            // not synched can't rely on that timing
-            finalTime = nextSub.getStartTime();
-            // since there is no end time for the final one,
-            // we can only split the time between the first
-            // two
-            gap = (finalTime - initialTime) / 2;
-        }{
+    // We're creating a sub before the very first one.
+    if (typeof prevSub === 'undefined') {
+    
+        // If the first sub starts at zero.
+        if (nextSub.getStartTime() === 0) {
 
-            gap = (finalTime - initialTime) / 3;
+            var firstSubGap = nextSub.getEndTime() - nextSub.getStartTime();
+            var midPoint = firstSubGap / 2;
+
+            insertedSub.setStartTime(0);
+            insertedSub.setEndTime(midPoint);
+            nextSub.setStartTime(midPoint);
+
         }
-        prevSub.setEndTime(initialTime + gap);
-        insertedSub.setStartTime(prevSub.getEndTime());
-        insertedSub.setEndTime(prevSub.getEndTime() + gap);
-        nextSub.setStartTime(insertedSub.getEndTime());
+
+    } else {
+        if (!nextSub.needsSync() && !prevSub.needsSync()){
+            // both are synced we can set actual time values for the new one
+             var gap = nextSub.getStartTime() - prevSub.getEndTime();
+            if (gap > 500){
+                // gap is enough to fit in a sub between it
+                insertedSub.setStartTime(prevSub.getEndTime());
+                insertedSub.setEndTime(nextSub.getStartTime());
+                return;
+            }
+            // no gap enough, so we need to divide times:
+            var initialTime = prevSub.getStartTime();
+            var finalTime = nextSub.getEndTime();
+            if (finalTime === -1){
+                // not synched can't rely on that timing
+                finalTime = nextSub.getStartTime();
+                // since there is no end time for the final one,
+                // we can only split the time between the first
+                // two
+                gap = (finalTime - initialTime) / 2;
+            } else {
+
+                gap = (finalTime - initialTime) / 3;
+            }
+            prevSub.setEndTime(initialTime + gap);
+            insertedSub.setStartTime(prevSub.getEndTime());
+            insertedSub.setEndTime(prevSub.getEndTime() + gap);
+            nextSub.setStartTime(insertedSub.getEndTime());
+        }
     }
 };
 
@@ -227,7 +263,7 @@ unisubs.subtitle.EditableCaptionSet.prototype.deleteCaption = function(caption) 
     var prevSub = sub.getPreviousCaption();
     var nextSub = sub.getNextCaption();
     goog.array.removeAt(this.captions_, index);
-    this.x['removeSubtitle'](index);
+    this.x['removeSubtitle'](caption.node);
     if (prevSub){
         prevSub.setNextCaption(nextSub);
     }

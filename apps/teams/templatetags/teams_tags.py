@@ -45,7 +45,7 @@ from apps.teams.permissions import (
     can_delete_video as _can_delete_video,
     can_delete_video_in_team as _can_delete_video_in_team,
     can_approve as _can_approve,
-    can_delete_subs as _can_delete_subs,
+    can_delete_language as _can_delete_language,
 )
 from apps.teams.permissions import (
     can_invite, can_add_video_somewhere,
@@ -512,49 +512,10 @@ def can_create_translations_for(user, video):
         return can_create_and_edit_translations(user, team_video)
 
 @register.filter
-def can_unpublish(user, video):
-    """Return True if the user can unpublish subtitles for this video.
-
-    Safe to use with anonymous users as well as non-team videos.
-
-    Usage:
-
-        {% if request.user|can_unpublish:video %}
-            ...
-        {% endif %}
-
-    """
-    team_video = video.get_team_video()
-
-    if not team_video:
-        return False
-
-    workflow = Workflow.get_for_team_video(team_video)
-    if not workflow:
-        return False
-
-    if workflow.approve_enabled:
-        return _can_approve(team_video, user)
-
-    return False
-
-@register.filter
-def can_delete_subtitles_for(user, video):
-    """Return True if the user can delete subtitles for this video.
-
-    Usage:
-
-        {% if request.user|can_delete_subtitles_for:video %}
-            ...
-        {% endif %}
-
-    """
-    team_video = video.get_team_video()
-
-    if not team_video:
-        return False
-
-    return _can_delete_subs(team_video, user)
+def can_delete_language(user, language):
+    team_video = language.video.get_team_video()
+    return (team_video is not None and
+            _can_delete_language(team_video.team, user))
 
 @register.filter
 def sync_third_party_account(account, team):

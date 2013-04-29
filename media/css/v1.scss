@@ -1,3 +1,5 @@
+@charset "UTF-8";
+
 @mixin border-radius($radius: 5px) {
     -moz-background-clip: padding-box;
     -moz-border-radius: $radius;
@@ -1109,6 +1111,10 @@ div.upload-draft-modal {
             }
         }
 
+        label.grouped {
+            padding: 0;
+        }
+
         input[type="text"], input[type="password"], textarea {
             border: 1px solid $faint;
             @include block-level;
@@ -1773,6 +1779,12 @@ body.account {
             color: #B6464D;
         }
     }
+
+    ul#subtitles-menu {
+        img, a, span {
+            vertical-align: middle;
+        }
+    }
 }
 .v1 .context {
     border-left: none;
@@ -1979,6 +1991,25 @@ ol.subtitles {
 }
 div#rollback-button {
     padding: 20px 12px;
+}
+ol.subtitles-diff {
+    border-top: 1px solid #F3F6F8;
+}
+ol.subtitles-diff li{
+    padding: 1em 0;
+    border-bottom: 1px solid #F3F6F8;
+}
+
+/* Delete Language page */
+.v1 .delete-language-warning {
+    margin: 2em 0;
+    h3 {
+        color: #f00;
+    }
+    li {
+        list-style-type: disc;
+        font-size: 1.2em;
+    }
 }
 
 /* Overrides */

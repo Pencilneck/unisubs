@@ -28,7 +28,7 @@ class Migration(DataMigration):
         if self._is_dependent(sl1):
             if sl1.percent_done == 0:
                 return 0
-            elif not _is_dependent(sl0):
+            elif not self._is_dependent(sl0):
                 l_dep1 = self._standard_language(sl1)
                 return sl1.percent_done if l_dep1 and \
                     l_dep1.id == sl0.id else -1

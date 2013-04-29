@@ -47,6 +47,17 @@ unisubs.player.WistiaVideoSource.prototype.createPlayer_ = function(forDialog) {
         forDialog);
 };
 
+unisubs.player.WistiaVideoSource.prototype.sizeFromConfig = function() {
+    if (this.videoConfig_ && this.videoConfig_['width'] && 
+        this.videoConfig_['height']) {
+        return new goog.math.Size(
+            parseInt(this.videoConfig_['width'], 0), parseInt(this.videoConfig_['height'], 0));
+    }
+    else {
+        return null;
+    }
+};
+
 unisubs.player.WistiaVideoSource.prototype.getVideoId = function() {
     return this.videoID_;
 };

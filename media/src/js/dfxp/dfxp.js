@@ -201,6 +201,16 @@ var AmaraDFXPParser = function(AmaraDFXPParser) {
             xmlString = xmlString.replace(/(div|p|span) xmlns=\"http:\/\/www\.w3\.org\/ns\/ttml\"/g, '$1');
             xmlString = xmlString.replace(/(div|p|span) xmlns=\"\"/g, '$1');
 
+            // IE special-casing.
+            xmlString = xmlString.replace(/xmlns:NS\d+=\"\" /g, '');
+            xmlString = xmlString.replace(/NS\d+:/g, '');
+
+            // If the XML does not have a tts namespace set on the <tt> element, we need to
+            // set it specifically. This is an IE9 issue.
+            if (xmlString.substring(0).search(/\<tt.*xmlns:tts="http:\/\/www.w3.org\/ns\/ttml#styling" /)) {
+                xmlString = xmlString.replace(/\<tt /g, '<tt xmlns:tts="http:\/\/www.w3.org\/ns\/ttml#styling" ');
+            }
+
             // Hey look, more hacks. For some reason, when the XML is spit to a
             // string, the attributes are all lower-cased. Fix them here.
             xmlString = xmlString.replace(/textdecoration/g, 'textDecoration');
@@ -230,15 +240,20 @@ var AmaraDFXPParser = function(AmaraDFXPParser) {
         if (typeof after !== 'object' || after === null) {
 
             // If this is a number, get the subtitle by index.
-            if (typeof after === 'number') {
+            if (typeof after === 'number' && after !== -1) {
+
                 after = this.getSubtitleByIndex(after);
-            } else if (this.subtitlesCount()) {
+
+            } else if (this.subtitlesCount() && after !== -1) {
+
                 // If we have subtitles, default placement should be at the end.
                 after = this.getLastSubtitle();
 
             // Otherwise, place the first subtitle at the beginning.
             } else {
+
                 after = -1;
+
             }
         }
 
@@ -299,7 +314,7 @@ var AmaraDFXPParser = function(AmaraDFXPParser) {
             // Prepend the new subtitle to the first div.
             this.$firstDiv.prepend(newSubtitle);
 
-            // Otherwise, place it after the designated subtitle.
+        // Otherwise, place it after the designated subtitle.
         } else {
 
             // First just make sure that the previous subtitle exists.
@@ -568,7 +583,9 @@ var AmaraDFXPParser = function(AmaraDFXPParser) {
          */
 
         return (time >= this.startTime(node) &&
-                time <= this.endTime(node));
+                time <= this.endTime(node)) ||
+            (time >= this.startTime(node) &&
+                this.endTime(node) == -1);
     };
     this.markdownToDFXP = function(input) {
         /**
@@ -588,6 +605,7 @@ var AmaraDFXPParser = function(AmaraDFXPParser) {
             input = input.replace(MARKUP_REPLACE_SEQ[i][0],
                 MARKUP_REPLACE_SEQ[i][1]);
         }
+        input = input.replace("\n", '<br/>');
         return input;
     };
     this.markdownToHTML = function(text) {
@@ -804,22 +822,10 @@ var AmaraDFXPParser = function(AmaraDFXPParser) {
          * Returns: true
          */
 
-        var $subtitles = this.getSubtitles();
-
-        for (var i = 0; i < $subtitles.length; i++) {
-
-            var $subtitle = $subtitles.eq(i);
-            var content = $('<div>').append($subtitle.contents().clone()).remove().html();
-
-            if (content === '') {
-                $subtitle.remove();
-            } else {
-                $subtitle.text('').attr({
-                    'begin': '',
-                    'end': ''
-                });
-            }
-        }
+        this.$xml = this.$originalXml.clone();
+        // Cache the first div.
+        this.$firstDiv = $('div:first-child', this.$xml);
+        return true;
     };
     this.startOfParagraph = function(node, startOfParagraph) {
         /*
@@ -916,8 +922,45 @@ var AmaraDFXPParser = function(AmaraDFXPParser) {
 
         return isNaN(val) ? -1 : val;
     };
+    this.startTimeDisplay = function(node) {
+        /*
+         * Display the start time in either seconds or time expression, depending on
+         * how large it is.
+         */
+
+        if (this.startTime(node) > 60000) {
+
+            var timeExp = this.startTimeInTimeExpression(node).replace(',', '.');
+            var timeExpParts = timeExp.split(':');
+
+            var hours = timeExpParts[0];
+            var minutes = timeExpParts[1];
+            var seconds = timeExpParts[2];
+
+            if (hours === '00') {
+
+                if (minutes === '00') {
+                    return seconds;
+                }
+
+                minutes = parseInt(minutes, 10);
+
+                return [ minutes, seconds ].join(':');
+            }
+
+            hours = parseInt(hours, 10);
+
+            return [ hours, minutes, seconds ].join(':');
+
+        } else {
+            return this.startTimeInSeconds(node);
+        }
+    };
     this.startTimeInSeconds = function(node) {
         return parseFloat(this.startTime(node) / 1000).toFixed(3);
+    };
+    this.startTimeInTimeExpression = function(node) {
+        return this.utils.millisecondsToTimeExpression.call(this, this.startTime(node));
     };
     this.subtitlesCount = function() {
         /*
@@ -957,11 +1000,22 @@ var AmaraDFXPParser = function(AmaraDFXPParser) {
                 // means we were able to convert some Markdown to DFXP.
                 if (convertedText !== $subtitle.text()) {
 
-                    // First, empty out the subtitle's text.
+                    // Create a new object with this new converted DOM structure.
+                    //
+                    // We have to use a placeholder div otherwise if you try and just append
+                    // the convertedText to the subtitle node, it'll disregard text that is not
+                    // within a child element.
+                    var $newObj = $('<div class="removeme">').append(convertedText);
+
+                    // Clear out the subtitle's existing content.
                     $subtitle.text('');
-                    
-                    // Append the new node structure to the subtitle node.
-                    $subtitle.append($(convertedText));
+
+                    // Append the new object to this subtitle.
+                    $subtitle.append($newObj);
+
+                    // Kill the placeholder div.
+                    $('div.removeme', $subtitle).children().unwrap();
+
                 }
             }
         }

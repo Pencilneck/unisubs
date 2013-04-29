@@ -92,7 +92,7 @@ class Command(BaseCommand):
         self.log(video)
 
         for language in languages:
-            latest_version = language.latest_version(public_only=True)
+            latest_version = language.get_tip(public=True)
 
             if latest_version:
                 self.log(' ' + str(language))

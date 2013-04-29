@@ -47,3 +47,6 @@ if COMPRESS_MEDIA:
 
 import logging
 logging.getLogger('pysolr').setLevel(logging.ERROR)
+logging.getLogger('requests').setLevel(logging.ERROR)
+logging.disable(logging.INFO)
+logging.disable(logging.DEBUG)

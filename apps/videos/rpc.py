@@ -25,7 +25,8 @@ from django.template.defaultfilters import slugify
 from django.template.loader import render_to_string
 from django.utils.translation import ugettext as _
 
-from apps.videos.models import Video, SubtitleLanguage, Action
+from apps.subtitles.models import SubtitleLanguage
+from apps.videos.models import Video, Action
 from apps.videos.search_indexes import VideoIndex
 from apps.videos.tasks import send_change_title_email
 from utils.celery_search_index import update_search_index
@@ -328,26 +329,6 @@ class VideosApiClass(object):
             return Error(_(u'Video does not exist'))
 
         return Msg(_(u'Title was changed success'))
-
-    def change_title_translation(self, language_id, title, user):
-        if not user.is_authenticated():
-            return Error(self.authentication_error_msg)
-
-        if not title:
-            return Error(_(u'Title can\'t be empty'))
-
-        try:
-            sl = SubtitleLanguage.objects.filter(is_original=False).get(id=language_id)
-        except SubtitleLanguage.DoesNotExist:
-            return Error(_(u'Subtitle language does not exist'))
-
-        if not sl.standard_language_id:
-            sl.title = title
-            sl.save()
-            update_search_index.delay(Video, sl.video_id)
-            return Msg(_(u'Title was changed success'))
-        else:
-            return Error(_(u'This is not forked translation'))
 
     def follow(self, video_id, user):
         if not user.is_authenticated():

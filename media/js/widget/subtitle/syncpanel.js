@@ -53,6 +53,7 @@ unisubs.subtitle.SyncPanel = function(subtitles, videoPlayer, serverModel, capti
         this.currentStep_ = 1;
     }
 
+    this.captionManager_.currentCaptionIndex_ = -1;
 };
 
 goog.inherits(unisubs.subtitle.SyncPanel, goog.ui.Component);

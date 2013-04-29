@@ -385,8 +385,8 @@ def _add_subtitles(video, language_code, subtitles, title, description, author,
 def _rollback_to(video, language_code, version_number, rollback_author):
     sl = SubtitleLanguage.objects.get(video=video, language_code=language_code)
 
-    current = sl.get_tip()
-    target = sl.subtitleversion_set.get(version_number=version_number)
+    current = sl.get_tip(full=True)
+    target = sl.subtitleversion_set.full().get(version_number=version_number)
 
     # The new version is mostly a copy of the target.
     data = {
@@ -405,7 +405,7 @@ def _rollback_to(video, language_code, version_number, rollback_author):
 
     # If any version in the history is public, then rollbacks should also result
     # in public versions.
-    existing_versions = target.sibling_set.all()
+    existing_versions = target.sibling_set.extant()
     data['visibility'] = ('public'
                           if any(v.is_public() for v in existing_versions)
                           else 'private')

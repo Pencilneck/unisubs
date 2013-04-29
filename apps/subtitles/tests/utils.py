@@ -17,7 +17,7 @@
 # along with this program.  If not, see
 # http://www.gnu.org/licenses/agpl-3.0.html.
 
-from babelsubs.storage import  SubtitleSet
+from babelsubs.storage import SubtitleSet
 
 from apps.videos.models import Video
 from apps.subtitles.models import SubtitleLanguage
@@ -56,7 +56,7 @@ def ids(vs):
     return set(versionid(v) for v in vs)
 
 def parent_ids(version):
-    return ids(version.parents.all())
+    return ids(version.parents.full())
 
 def ancestor_ids(version):
     return ids(version.get_ancestors())

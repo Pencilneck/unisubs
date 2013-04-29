@@ -158,9 +158,12 @@ def gmail_login(request):
     request.session['openid_provider'] = 'Google'
     return begin(request, user_url='https://www.google.com/accounts/o8/id')
 
+def udacity_login(request):
+    request.session['openid_provider'] = 'Udacity'
+    return begin(request, user_url='https://www.udacity.com/openid/server')
+
 def gmail_login_complete(request):
     pass
-
 
 def yahoo_login(request):
     request.session['openid_provider'] = 'Yahoo'
@@ -181,7 +184,7 @@ def openid_done(request, provider=None):
         #check for already existing associations
         openid_key = str(request.openid)
         #authenticate and login
-        user = authenticate(openid_key=openid_key, request=request, provider = provider)
+        user = authenticate(openid_key=openid_key, request=request, provider=provider)
         if user:
             if not user.userlanguage_set.exists():
                 langs = get_user_languages_from_cookie(request)

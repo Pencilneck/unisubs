@@ -204,7 +204,9 @@ class TestRpc(TestCase):
         request.session = {}
         rpc.finished_subtitles(request, session.pk, create_subtitle_set(1))
         video = Video.objects.get(pk=session.video.pk)
-        self.assertEquals(1, video.subtitle_language().subtitleversion_set.count())
+        self.assertEquals(1, video.subtitle_language().subtitleversion_set
+                                                      .full()
+                                                      .count())
 
     def test_finish(self):
         request = RequestMockup(self.user_0)
@@ -246,7 +248,7 @@ class TestRpc(TestCase):
         video = Video.objects.get(pk=session.video.pk)
         language = video.subtitle_language('en')
 
-        self.assertEqual(2, language.subtitleversion_set.count())
+        self.assertEqual(2, language.subtitleversion_set.full().count())
 
         version = language.get_tip()
         time_change, text_change = version.get_changes()
@@ -424,7 +426,7 @@ class TestRpc(TestCase):
         rpc.finished_subtitles(request_1, session_pk, SubtitleSet('en').to_xml())
         video = Video.objects.get(pk=version.language.video.pk)
         language = SubtitlingSession.objects.get(pk=session_pk).language
-        self.assertEqual(2, language.subtitleversion_set.count())
+        self.assertEqual(2, language.subtitleversion_set.full().count())
         self.assertEqual( 0, len(language.version().get_subtitles()))
         self.assertTrue(sub_models.SubtitleLanguage.objects.having_nonempty_versions().filter(pk=language.pk).exists())
         self.assertFalse(sub_models.SubtitleLanguage.objects.having_nonempty_tip().filter(pk=language.pk).exists())
@@ -444,7 +446,7 @@ class TestRpc(TestCase):
             subtitles=[])
         video = Video.objects.get(video_id=video_id)
         language = SubtitlingSession.objects.get(pk=session_pk).language
-        self.assertEquals(0, language.subtitleversion_set.count())
+        self.assertEquals(0, language.subtitleversion_set.full().count())
         self.assertEquals(None, language.version())
         self.assertFalse(sub_models.SubtitleLanguage.objects.having_nonempty_versions().filter(pk=language.pk).exists())
 
@@ -474,7 +476,7 @@ class TestRpc(TestCase):
 
         language = video.subtitle_language('es')
 
-        self.assertEquals(1, language.subtitleversion_set.count())
+        self.assertEquals(1, language.subtitleversion_set.full().count())
         self.assertEquals(language.get_translation_source_language_code(), 'en')
 
         version = language.get_tip()
@@ -495,7 +497,7 @@ class TestRpc(TestCase):
 
         language = video.subtitle_language('es')
 
-        self.assertEquals(2, language.subtitleversion_set.count())
+        self.assertEquals(2, language.subtitleversion_set.full().count())
         self.assertEquals(language.get_translation_source_language_code(), 'en')
 
         version = language.get_tip()
@@ -520,7 +522,7 @@ class TestRpc(TestCase):
         # user_1 deletes the subtitles.
         rpc.finished_subtitles(request_1, session_pk, SubtitleSet('en').to_xml())
         language = SubtitlingSession.objects.get(pk=session_pk).language
-        self.assertEquals(2, language.subtitleversion_set.count())
+        self.assertEquals(2, language.subtitleversion_set.full().count())
         self.assertEquals(0, len(language.version().get_subtitles()))
         self.assertTrue(sub_models.SubtitleLanguage.objects.having_nonempty_versions().filter(pk=language.pk).exists())
         self.assertFalse(sub_models.SubtitleLanguage.objects.having_nonempty_tip().filter(pk=language.pk).exists())
@@ -535,7 +537,7 @@ class TestRpc(TestCase):
         new_language = SubtitlingSession.objects.get(pk=session_pk).language
         rpc.finished_subtitles(request, session_pk, SubtitleSet('en').to_xml())
         # creating an empty version should not store empty stuff on the db
-        self.assertEquals(0, new_language.subtitleversion_set.count())
+        self.assertEquals(0, new_language.subtitleversion_set.full().count())
 
         self.assertFalse(sub_models.SubtitleLanguage.objects.having_nonempty_versions().filter(pk=new_language.pk).exists())
         self.assertFalse(sub_models.SubtitleLanguage.objects.having_nonempty_tip().filter(pk=new_language.pk).exists())
@@ -622,7 +624,7 @@ class TestRpc(TestCase):
         es = video.subtitle_language('es')
 
         self.assertEquals(True, es.is_forked)
-        self.assertEquals(2, es.subtitleversion_set.count())
+        self.assertEquals(2, es.subtitleversion_set.full().count())
 
         subtitles = es.get_tip().get_subtitles()
         self.assertEquals(0, subtitles[0].start_time)
@@ -657,7 +659,7 @@ class TestRpc(TestCase):
 
         # even if you specify a new original language, we won't change the
         # original language.
-        self.assertEquals('en', video.subtitle_language().language_code)
+        self.assertEquals('en', video.primary_audio_language_code)
 
     def test_only_one_version(self):
         request = RequestMockup(self.user_0)
@@ -841,7 +843,7 @@ class TestRpc(TestCase):
         sl_en = video.subtitle_language('en')
         sl_es = video.subtitle_language('es')
 
-        self.assertEquals(0, sl_es.subtitleversion_set.count())
+        self.assertEquals(0, sl_es.subtitleversion_set.full().count())
 
         response = rpc.start_editing(
             request, video.video_id, 'es',
@@ -854,7 +856,7 @@ class TestRpc(TestCase):
             create_subtitle_set(1))
 
         sl_es = sub_models.SubtitleLanguage.objects.get(id=sl_es.id)
-        self.assertEquals(1, sl_es.subtitleversion_set.count())
+        self.assertEquals(1, sl_es.subtitleversion_set.full().count())
 
     def test_set_title(self):
         request = RequestMockup(self.user_0)
@@ -1146,20 +1148,20 @@ class TestLineageOnRPC(TestCase):
 
         self._edit_and_save(self.video, 'en', en_v1_sset)
         en = self.video.newsubtitlelanguage_set.get(language_code='en')
-        en_v1 = en.subtitleversion_set.get(version_number=1)
+        en_v1 = en.subtitleversion_set.full().get(version_number=1)
         self.assertEquals(en_v1.lineage, dict())
 
         # create en-v2 with a changed timming
-        en_v2_sset = create_subtitle_set()
+        en_v2_sset = create_subtitle_set(5)
         self._edit_and_save(self.video, 'en', en_v2_sset)
-        en_v2 = en.subtitleversion_set.get(version_number=2)
+        en_v2 = en.subtitleversion_set.full().get(version_number=2)
         self.assertEquals(en_v2.lineage, {'en':1})
 
         # create ge-v1 from en-v2
-        de_v1_sset = create_subtitle_set()
+        de_v1_sset = create_subtitle_set(3)
         self._edit_and_save(self.video, 'de', de_v1_sset, 'en')
         de = self.video.newsubtitlelanguage_set.get(language_code='de')
-        de_v1 = de.subtitleversion_set.get(version_number=1)
+        de_v1 = de.subtitleversion_set.full().get(version_number=1)
         self.assertEquals(de_v1.lineage, {'en':2})
 
         # rollback the en-v2 to en-v1
@@ -1168,12 +1170,12 @@ class TestLineageOnRPC(TestCase):
             version_number=en_v1.version_number,
             rollback_author=self.user_0)
         # make sure this exists
-        en_v3 = en.subtitleversion_set.get(version_number=3)
+        en_v3 = en.subtitleversion_set.full().get(version_number=3)
 
         # make sure we have the right lineages:
         de_v2_sset = create_subtitle_set()
         self._edit_and_save(self.video, 'de', de_v2_sset, 'en')
-        de_v2 = de.subtitleversion_set.get(version_number=2)
+        de_v2 = de.subtitleversion_set.full().get(version_number=2)
         self.assertIn('en', de_v2.lineage)
         self.assertEquals(de_v2.lineage['en'], 3)
         self.assertEqual(en, de.get_translation_source_language())

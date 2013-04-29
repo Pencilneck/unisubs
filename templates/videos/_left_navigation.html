@@ -1,32 +1,16 @@
 {% load i18n subtitles_tags videos_tags %}
 
-{% with lang=video.subtitle_language %}
-    {% if lang %}
-        {% if lang.get_public_tip or lang|in_progress %}
-            <li class="{% complete_color video.subtitle_language %}{% if language.is_original %} active{% endif %}">
-                <a href="{% language_url request video.subtitle_language %}">
-                    <span class="done_indicator"></span>
-                    {{ video.subtitle_language.get_language_code_display }}
-                    {% if lang|in_progress %}
-                        <span class="done_percentage">(in progress)</span>
-                    {% endif %}
-                </a>
-            </li>
-        {% endif %}
+{% for lang in language_list %}
+<li>
+<img src="{{ STATIC_URL }}images/language-list/status-{{ lang.status }}.png" alt="">
+    <a href="{{ lang.url }}"> {{ lang.name }} </a>
+    {% if lang.tags %}
+    <span class="tags">
+        {% for tag in lang.tags %} 
+            {{ tag }}
+            {% if not forloop.last %}|{% endif %}
+        {% endfor %}
+    </span>
     {% endif %}
-{% endwith %}
-{% if translations %}
-    {% for item in translations %}
-        {% if item.has_version or item|in_progress %}
-            <li class="{% complete_color item %}{% if language == item %} active{% endif %} {% if forloop.counter > 14 %}hidden{% endif %}">
-                <a href="{% language_url request item %}">
-                    <span class="done_indicator"></span>
-                    {{ item.get_language_code_display }}
-                    {% if item|in_progress %}
-                        <span class="done_percentage">(in progress)</span>
-                    {% endif %}
-                </a>
-            </li>
-        {% endif %}
-    {% endfor %}
-{% endif %}
+</li>
+{% endfor %}

@@ -92,7 +92,7 @@ unisubs.subtitle.Dialog.prototype.captionReached_ = function(event) {
     var text;
 
     if (c) {
-        text = this.captionSet_.x['content'](c.node);
+        text = this.captionSet_.x['content'](c.node || c);
     } else {
         text = '';
     }
@@ -324,8 +324,11 @@ unisubs.subtitle.Dialog.prototype.handleSaveAndOpenInNewEditor_ = function(event
     if (!this.doneButtonEnabled_) {
         return;
     }
+
+    // if this is related to a task, send the new editor the right task id
+    var taskURLPart = unisubs.task_id ? "/" + unisubs.task_id : "";
     this.exitURL = '/subtitles/editor/' + this.serverModel_.videoID_ + '/' +
-        this.subtitles_.LANGUAGE + '/?from-old-editor=true&' +
+        this.subtitles_.LANGUAGE + taskURLPart + '/?from-old-editor=true&' +
         window.location.search.replace('?', '');
     this.saveWork(false, true);
 };
@@ -550,6 +553,9 @@ unisubs.subtitle.Dialog.prototype.togglePause_ = function() {
 };
 unisubs.subtitle.Dialog.prototype.makeCurrentStateSubtitlePanel_ = function() {
     var s = unisubs.subtitle.Dialog.State_;
+    // make sure we clear the current displayed subtitle
+    this.captionManager_.onPanelChanged();
+
     if (this.state_ == s.TRANSCRIBE) {
         return new unisubs.subtitle.TranscribePanel(
             this.captionSet_,
@@ -675,5 +681,5 @@ unisubs.subtitle.Dialog.prototype.getServerModel = function(){
     return this.serverModel_;
 };
 unisubs.subtitle.Dialog.prototype.makeDFXPString =  function (){
-    return this.captionManager_.x.xmlToString(true, true);
+    return this.captionManager_.x['xmlToString'](true, true);
 };

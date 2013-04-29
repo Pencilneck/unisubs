@@ -1,4 +1,5 @@
 syntax: literal
+tmp.sql
 /migrations/
 pip-log.txt
 .DS_Store
@@ -41,7 +42,9 @@ celerybeat-schedule
 ./apps/servicesauth
 ./media/unisubservices
 ./user-data/pictures
+./g.dot
 ./.vagrant
+./.tx
 venv
 /.ponyrc
 ./user-data/video

@@ -60,10 +60,23 @@ unisubs.timeline.TimelineSubs.prototype.displayNewListener_ =
 {
     this.addSub_(event.subtitle);
 };
+
 unisubs.timeline.TimelineSubs.prototype.removeListener_ = function(event) {
-    var timelineSub = this.subs_[event.index];
-    this.removeChild(timelineSub, true);
-    delete this.subs_[event.index];
+    var timelineSub = null;
+    var timelineIndex = null;
+    // no need to keep the indexes updated, just cycle through them and
+    // find the right el:
+    goog.object.forEach(this.subs_, function(el, index, obj){
+        if (el.subtitle_ == event.subtitle){
+           timelineSub = el;
+            timelineIndex = index;
+        }
+    });
+    if (timelineSub){
+        this.removeChild(timelineSub, true);
+        delete this.subs_[timelineIndex];
+        return;
+    }
 };
 unisubs.timeline.TimelineSubs.prototype.addSub_ = function(sub) {
     var timelineSub = new unisubs.timeline.TimelineSub(

@@ -21,7 +21,7 @@ from django.conf.urls.defaults import include, patterns, url
 from django.conf import settings
 from django.contrib import admin
 from django.template import RequestContext, loader
-from django.views.generic.simple import direct_to_template
+from django.views.generic.simple import direct_to_template, redirect_to
 from sitemaps import sitemaps, sitemap_view, sitemap_index
 from socialauth.models import AuthMeta, OpenidProfile
 
@@ -47,6 +47,8 @@ js_info_dict = {
     'packages': ('unisubs'),
 }
 
+# run monkey patch django
+from utils import urlvalidator
 urlpatterns = patterns('',
     url('^500/$', direct_to_template, { 'template': '500.html' }),
     url('^404/$', direct_to_template, { 'template': '404.html' }),
@@ -134,8 +136,7 @@ urlpatterns = patterns('',
         {'template': 'dmca.html'}, 'dmca_page'),
     url(r'^faq$',  'django.views.generic.simple.direct_to_template',
         {'template': 'faq.html'}, 'faq_page'),
-    url(r'^terms$',  'django.views.generic.simple.direct_to_template',
-        {'template': 'terms.html'}, 'terms_page'),
+    url(r'^terms$', redirect_to, {'url': 'http://about.amara.org/tos/'}),
     url(r'^opensubtitles2010$',  'django.views.generic.simple.direct_to_template',
         {'template': 'opensubtitles2010.html'}, 'opensubtitles2010_page'),
     url(r'^test-ogg$',  'django.views.generic.simple.direct_to_template',

@@ -387,8 +387,8 @@ class TestVideoChangedEmailNotification(TestCase):
             html_text = "".join(html.body(text=True)).replace("\n", "")
             if email_number == 0:
                 # assert text and timing changes are correct
-                self.assertIn('75% of the text', html_text)
-                self.assertIn('50% of the timing was changed.', html_text)
+                self.assertIn('67% of the text', html_text)
+                self.assertIn('33% of the timing was changed.', html_text)
             # find the listed text changes to make sure they match
             diff_table =html.findAll('table', attrs={'class':'diffs'})[0]
             old_version_changes = []

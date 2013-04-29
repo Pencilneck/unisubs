@@ -19,6 +19,10 @@ class VideoPage(UnisubsPage):
     _POST_TWITTER = "a.twittter"
     _EMAIL_FRIENDS = "a.email"
     _FOLLOW = "button.follow-button"
+    #FOLLOW CONFIRMATION
+    _UNFOLLOW_ALL = 'input#unfollow-all-languages-button'
+    _SUBTITLES_OK = 'input#popup_ok'
+
     _EMBED_HELP = "div.unisubs-share h3 a.embed_options_link"
     _EMBED_CODE = ("div#embed-modal.modal div.modal-body form fieldset "
         "textarea")
@@ -38,6 +42,7 @@ class VideoPage(UnisubsPage):
     _UPLOAD_SUBTITLES = "a#upload-subtitles-link"
 
     #SUBTITLES_SIDE_SECTION
+    _SUB_LANGUAGES = "ul#subtitles-menu li a"
     _VIDEO_ORIGINAL = ""
     _VIDEO_LANG = ""
 
@@ -85,10 +90,10 @@ class VideoPage(UnisubsPage):
         self.select_option_by_text(self._SELECT_LANGUAGE, sub_lang)
         #Set the audio language
         if audio_lang:
-            self.select_option_by_text(self._PRIMARY_AUDIO)
+            self.select_option_by_text(self._PRIMARY_AUDIO, audio_lang)
         #Set the translation_from field
         if translated_from:
-            self.select_option_by_text(self._TRANSLATED_FROM)
+            self.select_option_by_text(self._TRANSLATE_FROM, translated_from)
         #Input the subtitle file
         self.type_by_css(self._SUBTITLES_FILE, sub_file)
         #Set complete
@@ -98,10 +103,11 @@ class VideoPage(UnisubsPage):
         self.wait_for_element_present(self._UPLOAD_SUBMIT)
         self.click_by_css(self._UPLOAD_SUBMIT)
         #Get the the response message
-        self.wait_for_element_present(self._FEEDBACK_MESSAGE)
+        self.wait_for_element_present(self._FEEDBACK_MESSAGE, wait_time=20)
         message_text = self.get_text_by_css(self._FEEDBACK_MESSAGE)
         #Close the dialog
         self.click_by_css(self._CLOSE)
+        self.wait_for_element_not_visible(self._CLOSE)
         return message_text
 
 
@@ -156,3 +162,40 @@ class VideoPage(UnisubsPage):
 
     def displays_upload_subtitles(self):
         return self.is_element_visible(self._UPLOAD_SUBTITLES)
+
+    def follow_text(self):
+        return self.get_text_by_css(self._FOLLOW)
+
+    def toggle_follow(self, lang=False):
+        self.click_by_css(self._FOLLOW)
+        if lang:
+            self.click_by_css(self._SUBTITLES_OK)
+        else:
+            self.click_by_css(self._UNFOLLOW_ALL)
+
+    def subtitle_languages(self):
+        langs = []
+        els = self.get_elements_list(self._SUB_LANGUAGES)
+        for el in els:
+            langs.append(el.text)
+        return langs
+
+    def language_status(self, language):
+        els =  self.get_elements_list(self._SUB_LANGUAGES)
+        try:
+            lang_el = [el for el in els if language in el.text][0]
+        except IndexError:
+            self.logger.info('language not in list')
+            return None
+        self.logger.info(dir(lang_el.parent))
+        lang_properties = lang_el.get_attribute('class')
+        self.logger.info(lang_properties)
+        if 'language-is-not-complete' in lang_properties:
+            return 'incomplete'
+        elif 'languge-is-complete' in lang_properties:
+            return 'complete'
+        else:
+            self.logger.info('not sure what state is language: %s' 
+                             % lang_el.text)
+            return None
+

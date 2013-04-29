@@ -6,7 +6,7 @@
         {% if not user.is_authenticated or not team_video.team|is_team_member:user %}
             This video is moderated by team &ldquo;{{ team_video.team.name }}&rdquo;. Please <a href="{% url teams:detail slug=team_video.team.slug %}">visit the team</a> to find out how you can contribute.
         {% else %}
-            {% if team_video.task_set.not_deleted.exists %}
+            {% if team_video.task_set.not_deleted.exists or team_video.team|can_add_tasks:user %}
                 <p>
                     Contribute subtitles: View <a href="{% url teams:team_tasks slug=team_video.team.slug %}?team_video={{ team_video.pk }}">tasks for this video</a>.
                 </p>

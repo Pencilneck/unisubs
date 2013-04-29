@@ -18,6 +18,7 @@
 # http://www.gnu.org/licenses/agpl-3.0.html.
 """Data creation and retrieval functions for the video tests."""
 
+from babelsubs.storage import SubtitleLine
 from apps.auth.models import CustomUser as User
 from apps.videos.models import Video
 from apps.subtitles import pipeline
@@ -79,9 +80,20 @@ def make_subtitle_language(video, language_code):
 
 
 # Subtitle Versions -----------------------------------------------------------
+def make_subtitle_lines(count, is_synced=True):
+    lines = []
+    for line_num in xrange(0, count):
+        lines.append(SubtitleLine(
+            line_num * 1000 if is_synced else None,
+            line_num * 1000 + 900 if is_synced else None,
+            "%s" % line_num,
+            {}
+        ))
+    return lines
+
 def make_subtitle_version(subtitle_language, subtitles=[], author=None,
                           parents=None, committer=None, complete=None,
-                          title=None, description=None):
+                          title=None, description=None, created=None,note=None):
     committer = committer or author
     return pipeline.add_subtitles(subtitle_language.video,
                                   subtitle_language.language_code,
@@ -91,6 +103,8 @@ def make_subtitle_version(subtitle_language, subtitles=[], author=None,
                                   committer=committer,
                                   complete=complete,
                                   title=title,
+                                  created=created,
+                                  note=note,
                                   description=description)
 
 def make_rollback_to(subtitle_language, version_number):

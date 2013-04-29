@@ -42,6 +42,9 @@ class SubtitleEditor(EditorDialogs):
     #REVIEW DIALOG
     _REVIEW_DONE = 'a.unisubs-done'
 
+    #TRANSLATION DIALOG
+    _TRANSLATION_SOURCE = "span.unisubs-title"
+
 
     def type_subs(self, subs_file=None):
         self.logger.info('typing in subtitles')
@@ -63,6 +66,14 @@ class SubtitleEditor(EditorDialogs):
                 self._TRANSLATE_INPUT)
         for i, line in enumerate(codecs.open(subs_file, encoding='utf-8')):
             input_elements[i].send_keys(line)
+
+    def translation_source(self):
+        source_list = []
+        els = self.get_elements_list(self._TRANSLATION_SOURCE)
+        for el in els:
+            source_list.append(el.text)
+        return source_list
+        
 
 
     def edit_subs(self, subs_file=None):
@@ -193,6 +204,7 @@ class SubtitleEditor(EditorDialogs):
         self.click_saved_ok()
 
     def dialog_title(self):
+        self.wait_for_element_visible(self._DIALOG_HEADING)
         return self.get_text_by_css(self._DIALOG_HEADING) 
 
     def complete_review(self, result='Accept'):

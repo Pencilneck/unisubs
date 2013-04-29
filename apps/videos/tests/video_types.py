@@ -17,9 +17,16 @@
 # along with this program. If not, see
 # http://www.gnu.org/licenses/agpl-3.0.html.
 
+import datetime
+
 from django.test import TestCase
 
+from babelsubs.storage import SubtitleLine, SubtitleSet
+
+from apps.auth.models import CustomUser as User
+from apps.teams.models import Team, TeamVideo
 from apps.subtitles import pipeline
+from apps.subtitles.models import SubtitleLanguage, SubtitleVersion
 from apps.videos.models import Video, VIDEO_TYPE_BRIGHTCOVE
 from apps.videos.types import video_type_registrar, VideoTypeError
 from apps.videos.types.base import VideoType, VideoTypeRegistrar
@@ -32,7 +39,7 @@ from apps.videos.types.mp3 import Mp3VideoType
 from apps.videos.types.vimeo import VimeoVideoType
 from apps.videos.types.youtube import (
     YoutubeVideoType, save_subtitles_for_lang,
-    _prepare_subtitle_data_for_version
+    _prepare_subtitle_data_for_version, add_credit, should_add_credit
 )
 from utils import test_utils
 
@@ -312,6 +319,7 @@ class VideoTypeRegistrarTest(TestCase):
         self.assertEqual(type, None)
         type = video_type_registrar.video_type_for_url('http://youtube.com/v=UOtJUmiUZ08')
         self.assertTrue(isinstance(type, YoutubeVideoType))
+        return
         self.assertRaises(VideoTypeError, video_type_registrar.video_type_for_url,
                           'http://youtube.com/v=100500')
 
@@ -336,32 +344,120 @@ class BrightcoveVideoTypeTest(TestCase):
 
 class CreditTest(TestCase):
 
-    fixtures = ['staging_users.json', 'staging_videos.json']
+    def setUp(self):
+        original_video , created = Video.get_or_create_for_url("http://www.example.com/original.mp4")
+        original_video.duration  = 10
+        original_video.save()
+        self.original_video = original_video
+        self.language = SubtitleLanguage.objects.create(
+            video=original_video, language_code='en', is_forked=True)
+        self.version = pipeline.add_subtitles(
+            self.original_video,
+            self.language.language_code,
+            [],
+            created=datetime.datetime.now(),
+        )
 
-    srt = """
-1
-99:59:59,000 --> 99:59:59,000
-some subtitle
+    def _sub_list_to_sv(self, subs):
+        sublines = []
+        for sub in subs:
+            sublines.append(SubtitleLine(
+                sub['start'],
+                sub['end'],
+                sub['text'],
+                {},
+            ))
+        user = User.objects.all()[0]
+        new_sv = pipeline.add_subtitles(
+            self.original_video,
+            self.language.language_code,
+            sublines,
+            author=user,
+        )
+        return new_sv
 
-2
-99:59:59,000 --> 99:59:59,000
-because video will be invisible
+    def _subs_to_sset(self, subs):
+        sset = SubtitleSet(self.language.language_code)
+        for s in subs:
+            sset.append_subtitle(*s)
+        return sset
 
-3
-00:06:27,000 --> 00:06:30,000
-Subtitles by the Amara.org community
-    """
+    def test_last_sub_not_synced(self):
+        subs = [SubtitleLine(
+            2 * 1000,
+            None,
+            'text',
+            {},
+        )]
 
-    def test_empty(self):
-        return
-        # from widget.srt_subs import GenerateSubtitlesHandler
+        last_sub = subs[-1]
 
-        # sv = SubtitleVersion.objects.all()[0]
+        self.assertEquals(last_sub.end_time, None)
 
-        # subs = [x.for_generator() for x in sv.ordered_subtitles()]
-        # subs = add_credit(sv, subs)
+        subs = add_credit(self.version, self._subs_to_sset(subs))
+        
+        self.assertEquals(last_sub.text, subs[-1].text)
 
-        # handler = GenerateSubtitlesHandler.get('srt')
-        # content = unicode(handler(subs, sv.language.video )).encode('utf-8')
+    def test_straight_up_video(self):
+        subs = [SubtitleLine(
+            2 * 1000,
+            3 * 1000,
+            'text',
+            {},
+        )]
 
-        self.assertEquals(content.strip().replace('\r', ''), self.srt.strip())
+        subs = add_credit(self.version, self._subs_to_sset(subs))
+        last_sub = subs[-1]
+        self.assertEquals(last_sub.text,
+                "Subtitles by the Amara.org community")
+        self.assertEquals(last_sub.start_time, 7000)
+        self.assertEquals(last_sub.end_time, 10 * 1000)
+
+    def test_only_a_second_left(self):
+        subs = [SubtitleLine(
+            2 * 1000,
+            9 * 1000,
+            'text',
+            {},
+        )]
+
+        subs = add_credit(self.version, self._subs_to_sset(subs))
+        last_sub = subs[-1]
+        self.assertEquals(last_sub.text,
+                "Subtitles by the Amara.org community")
+        self.assertEquals(last_sub.start_time, 9000)
+        self.assertEquals(last_sub.end_time, 10 * 1000)
+
+    def test_no_space_left(self):
+        self.original_video.duration = 10
+        self.original_video.save()
+        subs = [SubtitleLine(
+            2 * 1000,
+            10 * 1000,
+            'text',
+            {},
+        )]
+
+        subs = add_credit(self.version, self._subs_to_sset(subs))
+        self.assertEquals(len(subs), 1)
+        last_sub = subs[-1]
+        self.assertEquals(last_sub.text, 'text')
+
+    def test_should_add_credit(self):
+        sv = SubtitleVersion.objects.filter(
+                subtitle_language__video__teamvideo__isnull=True)[0]
+
+        self.assertTrue(should_add_credit(sv))
+
+        video = sv.subtitle_language.video
+        team, created = Team.objects.get_or_create(name='name', slug='slug')
+        user = User.objects.all()[0]
+
+        TeamVideo.objects.create(video=video, team=team, added_by=user)
+
+        sv = SubtitleVersion.objects.filter(
+                subtitle_language__video__teamvideo__isnull=False)[0]
+
+        self.assertFalse(should_add_credit(sv))
+
+

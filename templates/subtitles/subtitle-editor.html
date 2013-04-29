@@ -1,5 +1,8 @@
 <!DOCTYPE html>
-<html ng-app="amara.SubtitleEditor" lang="{{ language.language_code }}" subtitle-editor>
+<html ng-app="amara.SubtitleEditor" lang="{{ language.language_code }}" subtitle-editor 
+                                                                        language-code="{{ language.language_code }}"
+                                                                        video-id="{{ video.video_id }}">
+
 <head>
 
     <meta charset="utf-8" />
@@ -12,6 +15,9 @@
 
     <script type="text/javascript">
         var editorData = {{ editor_data|safe }}
+        window.Amara = window.Amara || {};
+        window.Amara.conf = window.Amara.conf || {};
+        window.Amara.conf.STATIC_ROOT_URL = '{{ STATIC_URL }}';
     </script>
 
     <!--[if IE]>
@@ -28,7 +34,8 @@
     <![endif]-->
 
 </head>
-<body>
+<body ng-class="{ 'timeline-shown': $root.timelineShown }">
+
     <div class="modal"
         ng-controller="ModalController"
         ng-show="content || loading">
@@ -41,10 +48,14 @@
             ng-cloak>
             <h1 ng-show="content.heading">[[ content.heading ]]</h1>
             <p ng-show="content.text">[[ content.text ]]</p>
+            <div ng-show="content.dfxpString" class="download">
+                <textarea class="download" ng-show="content.dfxpString">[[ content.dfxpString ]]</textarea>
+                <p>Copy the subtitles above and save them to your computer. You can upload them later.</p>
+            </div>
             <div class="content.buttons"
                 ng-show="content.buttons.length">
                 <button ng-repeat="button in content.buttons"
-                    ng-click="button.fn($event)"
+                    ng-click="button.fn()"
                     ng-class="button.class">[[ button.text ]]</button>
             </div>
         </div>
@@ -54,15 +65,19 @@
             <h1>Amara</h1>
         </section>
         <section class="video center column ng-cloak" ng-controller="VideoTitleController" ng-cloak>
-            <span class="video-title">[[ workingSubtitles.videoTitle ]]</span>
+            <span class="video-title">
+                <span class="subtitles-language">[[ workingSubtitles.languageName ]]</span>
+                <span class="sep">•</span>
+                [[ workingSubtitles.videoTitle ]]
+            </span>
         </section>
         <section class="status right column group">
             <div ng-cloak class="ng-cloak" ng-controller="SaveSessionController">
                 <div class="exit dropdown">
-                    <a class="discard" ng-click="discard($event)" href="#">
-                        Discard
+                    <a class="discard" ng-click="discard()">
+                        Exit
                     </a>
-                    <a class="save" ng-click="save($event)" href="#">
+                    <a class="save" ng-click="save()">
                         Save
                     </a>
                 </div>
@@ -86,6 +101,7 @@
     <section class="main ng-cloak" ng-cloak>
         <section class="left column">
             <div class="help-panel" ng-controller="HelpController">
+                <a class="advanced" ng-click="showAdvancedModal()">Advanced &raquo;</a>
                 <h1>Keyboard controls</h1>
                 <ul ng-show="commands">
                     <li ng-repeat="command in commands" class="group">
@@ -102,14 +118,24 @@
                 Amara editor preview. <a href="#" target="blank">Learn more or leave feedback</a>.
             </div>
             <div class="language-selections group" ng-controller="LanguageSelectorController">
-                <select name="language"
-                        ng-model="language"
-                        ng-options="item.name for item in languages">
-                </select>
-                <select name="version"
-                    ng-options="'Version ' + version.version_no for version in versions"
-                    ng-model="version">
-                </select>
+                <div class="select">
+                    <select name="language"
+                            ng-model="language"
+                            ng-options="item.name for item in languages">
+                    </select>
+                </div>
+                <div class="select">
+                    <select name="version"
+                        ng-model="version">
+                        <option
+                                ng-repeat='thisVersion in versions'
+                                ng-selected='version == thisVersion'
+                                ng-disabled='thisVersion.visibility == "Deleted"'
+                                ng-model='thisVersion'
+                                value="[[$index]]">
+                            [[thisVersion|versionDropDownDisplay]]</option>
+                    </select>
+                </div>
             </div>
             <div class="subtitles-wrapper">
                 <div class="reference subtitles" ng-controller="SubtitleListController">
@@ -126,7 +152,7 @@
 
                             <span ng-show="showStartTime"
                                   class="start-time">
-                                [[ parser.startTimeInSeconds(subtitle) ]]
+                                    [[ parser.startTime(subtitle)|displayTime ]]
                             </span>
 
                             <span ng-show="!isEditing"
@@ -139,16 +165,33 @@
                     </ul>
 
                 </div>
+                <a ng-click="$root.scrollingSynced = !$root.scrollingSynced"
+                   ng-class="{ locked: $root.scrollingSynced, unlocked: !$root.scrollingSynced }"
+                   class="scroll-lock">
+                </a>
             </div>
         </section>
         <section class="center column">
             <div class="video" id="video" ng-controller="VideoController"></div>
+            <div class="workspace-tools group" ng-controller="WorkspaceToolsController">
+                <div class="subtitles-language">
+                    [[ workingSubtitles.languageName ]] subtitles
+                </div>
+                <div class="switches" ng-show="false">
+                    <a class="timeline-display" ng-click="$root.timelineShown = !$root.timelineShown">
+                        <span ng-show="timelineShown">Hide</span>
+                        <span ng-show="!timelineShown">Show</span>
+                        timeline
+                    </a>
+                    <a class="video-display">Hide video</a>
+                </div>
+            </div>
             <div class="subtitles-wrapper">
                 <div class="working subtitles" ng-controller="SubtitleListController">
 
                     <ul subtitle-list="working-subtitle-set"
                         editable="true"
-                        can-add-and-remove="false"
+                        can-add-and-remove="allowsSyncing"
                         version-number="{{ version.version_number }}"
                         language-code="{{ language.language_code }}"
                         video-id="{{ video.video_id }}"
@@ -160,10 +203,18 @@
                             ng-class="{editing: isEditing, empty: empty}"
                             class="subtitle-list-item">
 
-                            <span ng-show="showStartTime"
-                                  class="start-time">
-                                [[ parser.startTimeInSeconds(subtitle) ]]
-                            </span>
+                            <div class="hover">
+                                <span  class="timing">
+                                    <span>[[ parser.startTime(subtitle)|displayTime ]]</span>
+                                    <a href ng-show='allowsSyncing' class="comments"></a>
+                                </span>
+                                <a href class="remove-subtitle"
+                                   ng-show='allowsSyncing'
+                                   ng-click="removeSubtitle(subtitle)">
+                                    Remove
+                                </a>
+                                <a href ng-show='allowsSyncing' class="add-subtitle"></a>
+                            </div>
 
                             <span ng-show="!isEditing"
                                   ng-bind-html-unsafe="parser.contentRendered(subtitle)"
@@ -173,12 +224,6 @@
                             <textarea ng-show="isEditing"
                                       style="display: none;">
                             </textarea>
-
-                            <a ng-show="canAddAndRemove"
-                               class="remove"
-                               ng-click="removeSubtitle(subtitle)">
-                                Remove
-                            </a>
 
                         </li>
 
@@ -197,31 +242,29 @@
             </div>
         </section>
         <section class="collab column" ng-controller="CollabController">
-            <a href="#"
-               class="toggle-pane"
-               ng-click="toggleModule($event, 'pane')"
+            <a class="toggle-pane"
+               ng-click="toggleDocking('pane')"
                ng-show="modulesEnabled.pane && !modulesOpen.pane">
                 Open Collab
             </a>
             <aside ng-show="modulesEnabled.pane && modulesOpen.pane">
-                <a href="#"
-                   class="toggle-pane"
-                   ng-click="toggleModule($event, 'pane')"
+                <a class="toggle-pane"
+                   ng-click="toggleDocking('pane')"
                    ng-show="modulesOpen.pane">
                     Close Collab
                 </a>
                 <div class="notes module"
                      ng-show="modulesEnabled.notes"
                      ng-class="{open: modulesOpen.notes}">
-                    <a href="#" class="title" ng-click="toggleModule($event, 'notes')">Notes</a>
+                    <a class="title" ng-click="toggleDocking('notes')">Notes</a>
                     <div class="content" ng-show="modulesOpen.notes">
                         <textarea ng-model="notes"></textarea>
                     </div>
                 </div>
                 <div class="approval module" ng-show="modulesEnabled.approval">
                     <div class="content">
-                        <button class="send-back" ng-click="sendBack($event)">Send Back</button>
-                        <button class="approve" ng-click="approve($event)">Approve</button>
+                        <button class="send-back" ng-click="sendBack()">Send Back</button>
+                        <button class="approve" ng-click="approve()">Accept</button>
                     </div>
                 </div>
             </aside>
@@ -229,29 +272,78 @@
                 <div ng-show="error" class="error">[[ error ]]</div>
             </div>
         </section>
+        <section class="right column">
+            <div class="steps-container">
+                <ul class="steps" ng-show='allowsSyncing'>
+                    <li class="done">1. Type what you hear</li>
+                    <li>2. Sync timing
+                        <ul>
+                            <li>Not all lines are synced yet.</li>
+                            <li class="highlighted">Highlight unsynced lines</li>
+                        </ul>
+                    </li>
+                    <li>3. Review and endorse</li>
+                </ul>
+            </div>
+        </section>
+    </section>
+    <section ng-controller="TimelineController"
+        class="timeline ng-cloak"
+        ng-show="false"
+        ng-show="$root.timelineShown"
+        ng-cloak
+        timeline>
+        <div class="current-time-marker"></div>
+        <div class="timing-container"></div>
+        <div class="subtitles-container">
+            <div class="subtitle mock-1">
+                <a href class="handle left"></a>
+                <span>This is mock subtitle one.</span>
+                <a href class="handle right"></a>
+            </div>
+            <div class="subtitle mock-2">
+                <a href class="handle left"></a>
+                <span>I mock subtitle, two.</span>
+                <a href class="handle right"></a>
+            </div>
+            <div class="subtitle mock-3">
+                <a href class="handle left"></a>
+                <span>The third mock subtitle is a longer one.</span>
+                <a href class="handle right"></a>
+            </div>
+            <div class="subtitle mock-4">
+                <a href class="handle left"></a>
+                <span>The fourth mock subtitle is a longer one but with less length.</span>
+                <a href class="handle right"></a>
+            </div>
+        </div>
     </section>
 
-    {% if DEBUG %}
-        <script>document.write('<script src="http://' + (location.host || 'localhost').split(':')[0] + ':35729/livereload.js?snipver=1"></' + 'script>')</script>
-    {% endif %}
 
-    <script src="{{ STATIC_URL }}src/js/third-party/amara-jquery-1.8.2.min.js"></script>
+    <script src="{{ STATIC_URL }}src/js/third-party/amara-jquery.min.js"></script>
     <script src="{{ STATIC_URL }}src/js/third-party/jquery.autosize.js"></script>
-    <script src="{{ STATIC_URL }}src/js/third-party/angular.1.0.3.js"></script>
+    <script src="{{ STATIC_URL }}src/js/third-party/angular.1.0.6.min.js"></script>
+    <script src="{{ STATIC_URL }}src/js/third-party/angular-cookies.js"></script>
     <script src="{{ STATIC_URL }}src/js/third-party/underscore.min.js"></script>
     <script src="{{ STATIC_URL }}src/js/third-party/popcorn.js"></script>
     <script src="{{ STATIC_URL }}src/js/popcorn/popcorn.amarasubtitle.js"></script>
     <script src="{{ STATIC_URL }}src/js/subtitle-editor/editor-app.js"></script>
     <script src="{{ STATIC_URL }}src/js/subtitle-editor/directives/subtitles.js"></script>
-    <script src="{{ STATIC_URL }}src/js/subtitle-editor/directives/helper-selector.js"></script>
     <script src="{{ STATIC_URL }}src/js/subtitle-editor/services/services.js"></script>
+    <script src="{{ STATIC_URL }}src/js/subtitle-editor/services/lock.js"></script>
     <script src="{{ STATIC_URL }}src/js/subtitle-editor/services/subtitles.js"></script>
     <script src="{{ STATIC_URL }}src/js/dfxp/dfxp.js"></script>
+    <script src="{{ STATIC_URL }}src/js/uri.js"></script>
     <script src="{{ STATIC_URL }}src/js/subtitle-editor/controllers/subtitles.js"></script>
-    <script src="{{ STATIC_URL }}src/js/subtitle-editor/controllers/video.js"></script>
     <script src="{{ STATIC_URL }}src/js/subtitle-editor/controllers/help.js"></script>
     <script src="{{ STATIC_URL }}src/js/subtitle-editor/controllers/collab.js"></script>
     <script src="{{ STATIC_URL }}src/js/subtitle-editor/controllers/modal.js"></script>
+    <script src="{{ STATIC_URL }}src/js/subtitle-editor/controllers/workspace-tools.js"></script>
+    <script src="{{ STATIC_URL }}src/js/subtitle-editor/controllers/timeline.js"></script>
+    <script src="{{ STATIC_URL }}src/js/subtitle-editor/controllers/video.js"></script>
+    <script src="{{ STATIC_URL }}src/js/subtitle-editor/filters/subtitles.js"></script>
+    <script src="{{ STATIC_URL }}src/js/popcorn/popcorn.flash-fallback.js"></script>
+    <script src="{{ STATIC_URL }}src/js/popcorn/popcorn.netflix.js"></script>
 
 </body>
 </html>

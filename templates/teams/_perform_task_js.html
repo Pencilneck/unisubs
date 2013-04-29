@@ -1,4 +1,4 @@
-{% if task.get_type_display == "Subtitle" or task.get_type_display == "Translate"%}
+{% if task.needs_start_dialog %}
 <script type="text/javascript">
 $('.perform-task-{{ task.pk }}').click(function() {
     var openDialog = function(){    

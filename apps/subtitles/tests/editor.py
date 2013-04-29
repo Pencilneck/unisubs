@@ -59,7 +59,7 @@ class EditorViewTest(TestCase):
         response = self.client.get(url)
         self.assertEquals(response.status_code, 200)
 
-    def test_valid_language_requured(self):
+    def test_valid_language_required(self):
         video = make_video()
         self._login()
         url = reverse("subtitles:subtitle-editor", args=(video.video_id,'xxxxx'))

@@ -288,7 +288,7 @@ unisubs.RightPanel.prototype.appendStepsContents_ = function($d, el) {
 
         var videoType = this.parent_.parent_.videoPlayer_.videoPlayerType_;
 
-        if (['html5', 'vimeo', 'youtube'].indexOf(videoType) !== -1) {
+        if (['vimeo', 'youtube', 'html5'].indexOf(videoType) !== -1) {
             var saveAndOpenInNewEditor = $d(
                 'div', 'unisubs-saveandopeninneweditor',
                 $d('span', null, 'Beta: '),

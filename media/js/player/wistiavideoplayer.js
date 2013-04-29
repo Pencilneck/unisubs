@@ -130,7 +130,16 @@ unisubs.player.WistiaVideoPlayer.prototype.createDom = function() {
         "http://fast.wistia.com/embed/iframe/" + 
             this.videoSource_.getVideoId());
     this.addQueryString_(embedUri);
-    this.playerSize_.width = 400;
+
+    var sizeFromConfig = this.videoSource_.sizeFromConfig();
+    if (!this.forDialog_ && sizeFromConfig)
+        this.playerSize_ = sizeFromConfig;
+    else
+        this.playerSize_ = this.forDialog_ ?
+        unisubs.player.AbstractVideoPlayer.DIALOG_SIZE :
+        unisubs.player.AbstractVideoPlayer.DEFAULT_SIZE;
+    this.setDimensionsKnownInternal();
+
     div_args = {
         'id': this.playerElemID_,
         'data-video-width': this.playerSize_.width + '',

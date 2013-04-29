@@ -46,9 +46,7 @@ def feature_video(context, video):
 
 @register.filter
 def is_follower(obj, user):
-    #obj is Video or SubtitleLanguage
-    # FIXME: Update this when follower fields alng on SubtitleLanguage
-    return True
+    # obj is Video or SubtitleLanguage
     if not user.is_authenticated():
         return False
 
@@ -201,8 +199,11 @@ def shortlink_for_video( video):
     """
     protocol = getattr(settings, 'DEFAULT_PROTOCOL')
     domain = Site.objects.get_current().domain
+    # don't www me, we'll redirect users and save three
+    # chars. Yay for our twitter-brave-new-world
+    domain = domain.replace("www.", '')
     encoded_pk = base62.from_decimal(video.pk)
-    path = reverse('shortlink', args=[encoded_pk])
+    path = reverse('shortlink', args=[encoded_pk], no_locale=True)
 
     return u"{0}://{1}{2}".format(unicode(protocol),
                                   unicode(domain), 

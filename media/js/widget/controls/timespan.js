@@ -61,6 +61,6 @@ unisubs.controls.TimeSpan.prototype.videoTimeUpdate_ = function() {
         this.currentlyDisplayedSecond_ = playheadSecs;
         goog.dom.setTextContent(
             this.timeElapsedLabel_,
-            unisubs.formatTime(playheadSecs * 1000, true));
+            unisubs.formatTime(parseInt(playheadSecs * 1000), true));
     }
 };

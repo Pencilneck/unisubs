@@ -17,9 +17,12 @@
 # along with this program. If not, see
 # http://www.gnu.org/licenses/agpl-3.0.html.
 
+from django.contrib.sites.models import Site
+from django.conf import settings
 from django.core.urlresolvers import reverse
 from django.test import TestCase
 
+from apps.videos.models import Video
 from apps.videos.templatetags.subtitles_tags import language_url
 from apps.videos.templatetags.videos_tags import shortlink_for_video
 from apps.videos.tests.data import get_video, make_subtitle_language
@@ -34,12 +37,28 @@ class TestTemplateTags(TestCase):
 
 class ShortUrlTest(TestCase):
     def setUp(self):
-        self.video = get_video(1)
+        self.video = Video.get_or_create_for_url("http://example.com/hey.mp4")[0]
+        site = Site.objects.get_current()
+        site.domain = "www.amara.org"
+        site.save()
+        # on production our domain might have www,
+        # make sure we have such domain and that
+        # www is not present
+        self.short_url = shortlink_for_video(self.video)
+        Site.objects.clear_cache()
+
+    def tearDown(self):
+        Site.objects.clear_cache()
 
     def test_short_url(self):
-        short_url = shortlink_for_video(self.video)
-        response = self.client.get(short_url)
+        response = self.client.get(self.short_url, follow=True)
         regular_url = reverse("videos:video", args=(self.video.video_id,))
-        # short urls have no language path on the url, so take that out
-        regular_url = regular_url[regular_url.find('/videos'):]
-        self.assertIn(regular_url , response['Location'])
+
+        location = response.redirect_chain[-1][0]
+        self.assertTrue(location.endswith(regular_url))
+
+    def test_short_url_no_locale(self):
+        self.assertFalse('/en/' in self.short_url)
+
+    def test_short_url_no_www(self):
+        self.assertTrue(self.short_url.startswith('%s://amara.org' % settings.DEFAULT_PROTOCOL))

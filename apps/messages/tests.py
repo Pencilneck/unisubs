@@ -16,27 +16,22 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see
 # http://www.gnu.org/licenses/agpl-3.0.html.
-
-import json, random
-from datetime import datetime
-
-from django.test import TestCase
-from django.core.urlresolvers import reverse
-from apps.auth.models import CustomUser as User
-from apps.auth.models import EmailConfirmation
 from django.core import mail
+from django.core.urlresolvers import reverse
+from django.test import TestCase
 
-from apps.messages.models import Message
+from apps.auth.models import CustomUser as User, EmailConfirmation
 from apps.messages import tasks as notifier
-
-from teams.models import Team, TeamMember, Application, Workflow,\
-     TeamVideo, Task, Setting, Invite
-from teams.forms import InviteForm
-from videos.models import Action, Video, SubtitleVersion, SubtitleLanguage, \
-     Subtitle
-from subtitles import models as sub_models
-from subtitles.pipeline import add_subtitles
+from apps.messages.models import Message
+from apps.subtitles import models as sub_models
+from apps.subtitles.pipeline import add_subtitles
+from apps.teams.forms import InviteForm
+from apps.teams.models import (
+    Team, TeamMember, Application, Workflow, TeamVideo, Task
+)
+from apps.videos.models import Action, Video
 from utils import send_templated_email
+
 
 class MessageTest(TestCase):
 
@@ -60,7 +55,7 @@ class MessageTest(TestCase):
         self.user.notify_by_email = True
         self.user.save()
         assert self.user.is_active and self.user.email
-        
+
         self._send_email(self.user)
         self.assertEqual(len(mail.outbox), 1)
 
@@ -68,7 +63,7 @@ class MessageTest(TestCase):
         self.user.notify_by_email = False
         self.user.save()
         assert self.user.is_active and self.user.email
-                
+
         self._send_email(self.user)
         self.assertEquals(len(mail.outbox), 0)
 
@@ -81,14 +76,14 @@ class MessageTest(TestCase):
         self.assertEquals(len(mail.outbox), 0)
         self.assertEquals(Message.objects.unread().filter(user=self.user).count(), 0)
         self.assertEquals(Message.objects.filter(user=self.user).count(), 1)
-        
+
     def test_member_join(self):
         def _get_counts(member):
-            email_to = "%s" %( member.user.email) 
+            email_to = "%s" %( member.user.email)
             return Message.objects.filter(user=member.user).count() , \
                 len([x for x in mail.outbox if email_to in x.recipients()])
-            
-        
+
+
         team , created= Team.objects.get_or_create(name='test', slug='test')
         # creates dummy users:
         for x in xrange(0,5):
@@ -114,13 +109,13 @@ class MessageTest(TestCase):
                 tm.save()
             else:
                 tm.role= TeamMember.ROLE_CONTRIBUTOR
-            
+
         # now make sure we count previsou messages
         owner_messge_count_1, owner_email_count_1 = _get_counts(owner)
         admin_messge_count_1, admin_email_count_1 = _get_counts(admin)
         manager_messge_count_1, manager_email_count_1 = _get_counts(manager)
         contributor_messge_count_1, contributor_email_count_1 = _get_counts(contributor)
-        # save the last team member and check that each group has appropriate counts 
+        # save the last team member and check that each group has appropriate counts
         tm.save()
         notifier.team_member_new(tm.pk)
         # owner and admins should receive email + message
@@ -147,17 +142,17 @@ class MessageTest(TestCase):
         self.assertTrue(Action.objects.for_user(manager.user).filter(pk=action.pk).exists())
         self.assertTrue(Action.objects.for_user(contributor.user).filter(pk=action.pk).exists())
         self.assertTrue(Action.objects.for_user(admin.user).filter(pk=action.pk).exists())
-        
+
     def test_member_leave(self):
         return # fix me now
         def _get_counts(member):
-            email_to = "%s" %( member.user.email) 
+            email_to = "%s" %( member.user.email)
             return Message.objects.filter(user=member.user).count() , \
                 len([x for x in mail.outbox if email_to in x.recipients()])
-            
-        
+
+
         team , created= Team.objects.get_or_create(name='test', slug='test')
-        
+
         # creates dummy users:
         for x in xrange(0,5):
             user, member = User.objects.get_or_create(
@@ -183,7 +178,7 @@ class MessageTest(TestCase):
                 tm.save()
             else:
                 tm.role= TeamMember.ROLE_CONTRIBUTOR
-            
+
         tm.save()
         # now make sure we count previsou messages
         owner_messge_count_1, owner_email_count_1 = _get_counts(owner)
@@ -192,13 +187,13 @@ class MessageTest(TestCase):
         contributor_messge_count_1, contributor_email_count_1 = _get_counts(contributor)
 
         # now delete and check numers
-        
+
         tm_user = tm.user
         tm_user_pk = tm.user.pk
         team_pk = tm.team.pk
         tm.delete()
         notifier.team_member_leave(team_pk, tm_user_pk)
-        # save the last team member and check that each group has appropriate counts 
+        # save the last team member and check that each group has appropriate counts
         # owner and admins should receive email + message
         owner_messge_count_2, owner_email_count_2 = _get_counts(owner)
         self.assertEqual(owner_messge_count_1 + 1, owner_messge_count_2)
@@ -223,14 +218,14 @@ class MessageTest(TestCase):
         self.assertTrue(Action.objects.for_user(manager.user).filter(pk=action.pk).exists())
         self.assertTrue(Action.objects.for_user(contributor.user).filter(pk=action.pk).exists())
         self.assertTrue(Action.objects.for_user(admin.user).filter(pk=action.pk).exists())
-        
+
     def test_application_new(self):
         def _get_counts(member):
-            email_to = "%s" %(member.user.email) 
+            email_to = "%s" %(member.user.email)
             return Message.objects.filter(user=member.user).count() , \
                 len([x for x in mail.outbox if email_to in x.recipients()])
-            
-        
+
+
         team , created= Team.objects.get_or_create(name='test', slug='test')
         applying_user = User.objects.all()[0]
         # creates dummy users:
@@ -255,7 +250,7 @@ class MessageTest(TestCase):
                 tm.role = TeamMember.ROLE_CONTRIBUTOR
                 contributor = tm
             tm.save()
-            
+
         # now make sure we count previsou messages
         owner_messge_count_1, owner_email_count_1 = _get_counts(owner)
         admin_messge_count_1, admin_email_count_1 = _get_counts(admin)
@@ -317,12 +312,14 @@ class MessageTest(TestCase):
 
 
     def test_moderated_notifies_only_when_published(self):
+        # TODO: should this use the new visibility settings instead of the old
+        # moderation stuff?
         """
         Set up a public team, add new video and new version.
         Notification should be sent.
         Setup  a team with moderated videos
         """
-        from teams.moderation_const import WAITING_MODERATION, APPROVED
+        from teams.moderation_const import WAITING_MODERATION
         def video_with_two_followers():
             v, c = Video.get_or_create_for_url("http://blip.tv/file/get/Miropcf-AboutUniversalSubtitles847.ogv")
             f1 = User.objects.all()[0]
@@ -372,18 +369,23 @@ class MessageTest(TestCase):
         # with the widget, this would set up correctly
         sv.moderation_status = WAITING_MODERATION
         sv.save()
-        
+
         video_changed_tasks(v.pk, sv.pk)
         sv = sub_models.SubtitleVersion.objects.get(pk=sv.pk)
         self.assertFalse(sv.is_public())
+        # no emails should be sent before the video is approved
+        self.assertEqual(len(mail.outbox), 0)
         # approve video
         t = Task(type=40, approved=20, team_video=tv, team=team, language='en',
                 new_subtitle_version=sv, assignee=self.author)
         t.save()
         t.complete()
+        self.assertTrue(sv.is_public())
         video_changed_tasks(v.pk, sv.pk)
-        
-        self.assertEqual(len(mail.outbox), 1)
+        # Once the video is approved, we should send out the
+        # team-task-approved-published.html email and the
+        # email_notification_non_editors.html to the author
+        self.assertEqual(len(mail.outbox), 2)
 
     def test_send_message_view(self):
         to_user = User.objects.filter(notify_by_email=True)[0]
@@ -397,7 +399,7 @@ class MessageTest(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         m = mail.outbox[0]
         self.assertTrue(to_user.email in m.to)
-        
+
 
     def test_messages_remain_after_team_membership(self):
         # Here's the scenario:
@@ -432,50 +434,84 @@ class TeamBlockSettingsTest(TestCase):
     fixtures = ["staging_users.json", "staging_videos.json", "staging_teams.json"]
 
     def test_block_settings_for_team(self):
-        from teams.models import Team, Setting, Invite, Application
+        from teams.models import Setting, Invite, Application
         from messages import tasks as n
         from teams import tasks as team_tasks
+
         team_video = TeamVideo.objects.all()[0]
+        video = team_video.video
         team = team_video.team
-        #team , created  = Team.objects.get_or_create(name='test', slug='test')
         user = User.objects.all()[0]
+
         user.notify_by_email = True
         user.save()
+
         owner = User.objects.all()[2]
         owner.notify_by_email = owner.notify_by_message = True
         owner.save()
-        TeamMember.objects.get_or_create(team=team, user=owner, role=TeamMember.ROLE_OWNER)
-        invite = Invite.objects.get_or_create(team=team, user=user, author=User.objects.all()[1])[0]
+
+        TeamMember.objects.get_or_create(team=team, user=owner,
+                                         role=TeamMember.ROLE_OWNER)
+        invite = Invite.objects.get_or_create(team=team,
+                                              user=user,
+                                              author=User.objects.all()[1])[0]
         member = TeamMember.objects.create(team=team, user=user)
         team_video = TeamVideo.objects.filter(team=team)[0]
-        task_assigned = Task.objects.create(team=team, team_video=team_video, type=10, assignee=member.user)
-
-        sv = SubtitleVersion.objects.all()[0]
-        language = team_video.video.subtitlelanguage_set.all()[0]
-        language.language = 'en'
-        language.save()
-        sv.language = language
-        sv.save()
+        task_assigned = Task.objects.create(team=team, team_video=team_video,
+                                            type=10, assignee=member.user)
 
         subs = [
             (0, 1000, 'Hello', {}),
             (2000, 5000, 'world.', {})
         ]
-        sv = add_subtitles(sv.video, 'en', subs)
-        task_with_version = Task.objects.create(team=team, team_video=team_video, type=10, assignee=member.user,
-                                                new_subtitle_version=sv, language='en')
+        sv = add_subtitles(video, 'en', subs)
+        task_with_version = Task.objects.create(team=team,
+                                                team_video=team_video,
+                                                type=10,
+                                                assignee=member.user,
+                                                new_subtitle_version=sv,
+                                                language='en')
 
         to_test = (
-            ("block_invitation_sent_message", n.team_invitation_sent, (invite.pk,)),
-            ("block_application_sent_message", n.application_sent, (Application.objects.get_or_create(team=team, note='', user=user)[0].pk, )),
-            ("block_application_denided_message", n.team_application_denied, (Application.objects.get_or_create(team=team, note='', user=user)[0].pk, )),
-            ("block_team_member_new_message", n.team_member_new, (member.pk, )),
-            ("block_team_member_leave_message", n.team_member_leave, (team.pk,member.user.pk )),
-            ("block_task_assigned_message", n.team_task_assigned, (task_assigned.pk,)),
-            ("block_reviewed_and_published_message", n.reviewed_and_published, (task_with_version.pk,)),
-            ("block_reviewed_and_pending_approval_message", n.reviewed_and_pending_approval, (task_with_version.pk,)),
-            ("block_reviewed_and_sent_back_message", n.reviewed_and_sent_back, (task_with_version.pk,)),
-            ("block_approved_message", n.approved_notification, (task_with_version.pk,)),
+            ("block_invitation_sent_message",
+             n.team_invitation_sent,
+             (invite.pk,)),
+
+            ("block_application_sent_message",
+             n.application_sent,
+             (Application.objects.get_or_create(team=team, note='', user=user)[0].pk,)),
+
+            ("block_application_denided_message",
+             n.team_application_denied,
+             (Application.objects.get_or_create(team=team, note='', user=user)[0].pk,)),
+
+            ("block_team_member_new_message",
+             n.team_member_new,
+             (member.pk, )),
+
+            ("block_team_member_leave_message",
+             n.team_member_leave,
+             (team.pk,member.user.pk )),
+
+            ("block_task_assigned_message",
+             n.team_task_assigned,
+             (task_assigned.pk,)),
+
+            ("block_reviewed_and_published_message",
+             n.reviewed_and_published,
+             (task_with_version.pk,)),
+
+            ("block_reviewed_and_pending_approval_message",
+             n.reviewed_and_pending_approval,
+             (task_with_version.pk,)),
+            
+            ("block_reviewed_and_sent_back_message",
+             n.reviewed_and_sent_back,
+             (task_with_version.pk,)),
+
+            ("block_approved_message",
+             n.approved_notification,
+             (task_with_version.pk,)),
 
         )
         for setting_name, function, args in to_test:
@@ -484,13 +520,17 @@ class TeamBlockSettingsTest(TestCase):
             if setting_name == 'block_application_sent_message':
                 pass
             function.run(*args)
-            self.assertTrue(Message.objects.count() > 0, "%s is off, so this message should be sent" % setting_name)
+            self.assertTrue(Message.objects.count() > 0,
+                "%s is off, so this message should be sent" % setting_name)
             Setting.objects.create(team=team, key=Setting.KEY_IDS[setting_name])
             Message.objects.all().delete()
             function.run(*args)
-            self.assertEquals(Message.objects.all().count() , 0, "%s is on, so this message should *not * be sent" % setting_name)
+            self.assertEquals(Message.objects.all().count(), 0,
+                "%s is on, so this message should *not * be sent" % setting_name)
+
         # add videos notification is a bit different
         setting_name = "block_new_video_message"
         Setting.objects.create(team=team, key=Setting.KEY_IDS[setting_name])
         team_tasks.add_videos_notification()
-        self.assertEquals(Message.objects.all().count() , 0, "%s is on, so this message should *not * be sent" % setting_name)
+        self.assertEquals(Message.objects.all().count(), 0,
+            "%s is on, so this message should *not * be sent" % setting_name)

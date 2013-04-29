@@ -2046,6 +2046,8 @@ embed#clippy {
     cursor: default !important;
     height: 46px !important;
     top: 7px !important;
+    border-radius: 3px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,01) !important;
 }
 .unisubs-timeline-sub-unsynced {
     background: #777 !important;

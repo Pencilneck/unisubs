@@ -13,7 +13,7 @@
 #admin_controls ul li {
     display: inline;
 }
-#admin_controls a {
+#admin_controls a, #admin_controls div.admin-edit-specific-version {
     display: block;
     float: left;
     font-size: 12px;
@@ -21,8 +21,11 @@
     text-decoration: none;
     color: #a0b2bd;
 }
+div.admin-edit-specific-version select {
+    margin: -3px 3px;
+}
 #admin_controls:hover a {
-    color: #7692a3;
+    color: #7692a3
 }
 #admin_controls a:hover {
     color: #1573AD;

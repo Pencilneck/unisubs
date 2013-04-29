@@ -64,8 +64,8 @@ class OpenIdBackend(object):
                 nickname = request.openid.sreg.get('nickname')
             elif request.openid and request.openid.ax:
                 if provider in ('Google', 'Yahoo'):
-                    email = request.openid.ax.get('http://axschema.org/contact/email')
-                    email = email.pop()
+                    key = 'http://axschema.org/contact/email'
+                    email = request.openid.ax.get(key)[-1]
                 else:
                     try:
                         email = request.openid.ax.get('email')
@@ -121,8 +121,7 @@ class OpenIdBackend(object):
             return UserAssociation.objects.get(openid_key = openid_key)
 
     def _lookup_gmail_assocation(self, openid_key, request, provider):
-        email = request.openid.ax.get('http://axschema.org/contact/email')
-        email = email.pop()
+        email = request.openid.ax.get('http://axschema.org/contact/email')[-1]
         try:
             rv = UserAssociation.objects.filter(email=email)[0]
         except IndexError:

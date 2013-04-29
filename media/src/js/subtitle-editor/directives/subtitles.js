@@ -18,6 +18,8 @@
 
 var angular = angular || null;
 var SubtitleListItemController = SubtitleListItemController || null;
+var LOCK_EXPIRATION = 25;
+var USER_IDLE_MINUTES = 5;
 
 (function($) {
 
@@ -30,13 +32,147 @@ var SubtitleListItemController = SubtitleListItemController || null;
             }
         };
     });
-    directives.directive('subtitleEditor', function(SubtitleStorage) {
+    directives.directive('subtitleEditor', function(SubtitleStorage, LockService, $timeout) {
+
+        var minutesIdle = 0;
+        var secondsUntilClosing = 120;
+        var videoId, languageCode, selectedScope, regainLockTimer;
+
+        function startUserIdleTimer() {
+            var userIdleTimeout = function() {
+
+                minutesIdle++;
+
+                if (minutesIdle >= USER_IDLE_MINUTES) {
+                    showIdleModal();
+                    $timeout.cancel(regainLockTimer);
+                } else {
+                    $timeout(userIdleTimeout, 60 * 1000);
+                }
+            };
+
+            $timeout(userIdleTimeout, 60 * 1000);
+        }
+        function startRegainLockTimer() {
+            var regainLockTimeout = function() {
+                LockService.regainLock(videoId, languageCode);
+                regainLockTimer = $timeout(regainLockTimeout, 15 * 1000);
+            };
+
+            regainLockTimer = $timeout(regainLockTimeout, 15 * 1000);
+
+        }
+        function showIdleModal() {
+
+            var heading = "Warning: you've been idle for more than " + USER_IDLE_MINUTES + " minutes. " +
+                "To ensure no work is lost we will close your session in ";
+
+            var closeSessionTimeout;
+
+            var closeSession = function() {
+
+                secondsUntilClosing--;
+
+                if (secondsUntilClosing <= 0) {
+
+                    LockService.releaseLock(videoId, languageCode);
+
+                    selectedScope.$root.$emit("show-modal", {
+                        heading: 'Your session has ended. You can try to resume, close the editor, or download your subtitles',
+                        buttons: [
+                            {'text': 'Try to resume work', 'class': 'yes', 'fn': function() {
+                                // TODO: Remove this duplication from below.
+                                if (closeSessionTimeout) {
+                                    $timeout.cancel(closeSessionTimeout);
+                                }
+
+                                var promise = LockService.regainLock(videoId, languageCode);
+
+                                promise.then(function onSuccess(response) {
+                                    if (response.data.ok) {
+                                        minutesIdle = 0;
+                                        selectedScope.$root.$broadcast('hide-modal');
+                                        startRegainLockTimer();
+                                        startUserIdleTimer();
+                                    } else {
+                                        window.alert("Sorry, could not restart your session.");
+                                        window.location = '/videos/' + videoId + "/";
+                                    }
+                                }, function onError() {
+                                    window.alert("Sorry, could not restart your session.");
+                                    window.location = '/videos/' + videoId + "/";
+                                });
+                            }},
+                            {'text': 'Download subtitles', 'class': 'no', 'fn': function() {
+                                selectedScope.$root.$emit('show-modal-download');
+                            }},
+                            {'text': 'Close editor', 'class': 'no', 'fn': function() {
+                                window.location = '/videos/' + videoId + "/";
+                            }}
+                        ]
+                    });
+
+                } else {
+
+                    selectedScope.$root.$emit('change-modal-heading', heading + secondsUntilClosing + " seconds.");
+                    closeSessionTimeout = $timeout(closeSession, 1000);
+
+                }
+            };
+
+            selectedScope.$root.$emit("show-modal", {
+                heading: heading + secondsUntilClosing + " seconds.",
+                buttons: [
+                    {'text': 'Try to resume work', 'class': 'yes', 'fn': function() {
+                        if (closeSessionTimeout) {
+                            $timeout.cancel(closeSessionTimeout);
+                        }
+
+                        var promise = LockService.regainLock(videoId, languageCode);
+
+                        promise.then(function onSuccess(response) {
+                            if (response.data.ok) {
+                                minutesIdle = 0;
+                                selectedScope.$root.$broadcast('hide-modal');
+                                startRegainLockTimer();
+                                startUserIdleTimer();
+                            } else {
+                                window.alert("Sorry, could not restart your session.");
+                                window.location = '/videos/' + videoId + "/";
+                            }
+                        }, function onError() {
+                            window.alert("Sorry, could not restart your session.");
+                            window.location = '/videos/' + videoId + "/";
+                        });
+                    }}
+                ]
+            });
+
+            closeSessionTimeout = $timeout(closeSession, 1000);
+
+        }
+
         return {
             compile: function compile(elm, attrs, transclude) {
                 return {
                     post: function post(scope, elm, attrs) {
 
+                        scope.scrollingSynced = true;
+                        scope.timelineShown = false;
+                        scope.subtitlesHeight = 366;
+
+                        scope.$watch('timelineShown', function() {
+                            if (scope.timelineShown) {
+                                scope.subtitlesHeight = 431;
+                            } else {
+                                scope.subtitlesHeight = 366;
+                            }
+                        });
+
                         $(elm).on('keydown', function(e) {
+
+                            // Reset the lock timer.
+                            minutesIdle = 0;
 
                             var video = angular.element($('#video').get(0)).scope();
 
@@ -47,7 +183,19 @@ var SubtitleListItemController = SubtitleListItemController || null;
                             }
 
                         });
+                        $(elm).on('mousemove', function() {
 
+                            // Reset the lock timer.
+                            minutesIdle = 0;
+
+                        });
+
+                        videoId = attrs.videoId;
+                        languageCode = attrs.languageCode;
+                        selectedScope = scope;
+
+                        startUserIdleTimer();
+                        startRegainLockTimer();
                     }
                 };
             }
@@ -89,7 +237,7 @@ var SubtitleListItemController = SubtitleListItemController || null;
                 activeTextArea.focus();
                 activeTextArea.autosize();
 
-                selectedScope.$root.$broadcast('subtitleSelected', selectedScope);
+                selectedScope.$root.$broadcast('subtitle-selected', selectedScope);
             }
         }
         function onSubtitleTextKeyDown(e) {
@@ -163,9 +311,6 @@ var SubtitleListItemController = SubtitleListItemController || null;
                 // Select the next element.
                 onSubtitleItemSelected(nextSubtitle);
 
-                // Focus on the active textarea.
-                activeTextArea.focus();
-
             }
         }
         function onSubtitleTextKeyUp(e) {
@@ -203,12 +348,34 @@ var SubtitleListItemController = SubtitleListItemController || null;
                         scope.isEditable = attrs.editable === 'true';
                         scope.canAddAndRemove = attrs.canAddAndRemove === 'true';
 
+                        // Cache the jQuery selection of the element.
+                        var $elm = $(elm);
+
+                        // Handle scroll.
+                        $elm.parent().scroll(function() {
+
+                            // If scroll sync is locked.
+                            if (scope.$root.scrollingSynced) {
+                                var newScrollTop = $elm.parent().scrollTop();
+
+                                $('div.subtitles').each(function() {
+
+                                    var $set = $(this);
+
+                                    if ($set.scrollTop() !== newScrollTop) {
+                                        $set.scrollTop(newScrollTop);
+                                    }
+
+                                });
+                            }
+                        });
+
                         if (scope.isEditable) {
-                            $(elm).click(function(e) {
+                            $elm.click(function(e) {
                                 onSubtitleItemSelected(e.srcElement || e.target);
                             });
-                            $(elm).on('keydown', 'textarea', onSubtitleTextKeyDown);
-                            $(elm).on('keyup', 'textarea', onSubtitleTextKeyUp);
+                            $elm.on('keydown', 'textarea', onSubtitleTextKeyDown);
+                            $elm.on('keyup', 'textarea', onSubtitleTextKeyUp);
 
                             // In order to catch an <esc> key sequence, we need to catch
                             // the keycode on the document, not the list. Also, keyup must
@@ -228,7 +395,7 @@ var SubtitleListItemController = SubtitleListItemController || null;
                             // if a subtitleListItem is created and its index matches the
                             // focus index that is set when adding the new subtitle from the
                             // controller.
-                            $(elm).on('selectFocusedSubtitle', function() {
+                            $elm.on('selectFocusedSubtitle', function() {
 
                                 var $subtitle = $('li', elm).eq(scope.focusIndex);
 
@@ -265,6 +432,56 @@ var SubtitleListItemController = SubtitleListItemController || null;
                             $(elm).parent().trigger('selectFocusedSubtitle');
 
                         }
+
+                    }
+                };
+            }
+        };
+    });
+    directives.directive('timeline', function() {
+        return {
+            compile: function compile(elem, attrs, transclude) {
+                return {
+                    post: function post(scope, elem, attrs) {
+
+                        var $elem = $(elem);
+                        var $timingContainer = $('div.timing-container', elem);
+                        var $body = $('body');
+
+                        var renderTimelineSubtitles = function(pop) {
+
+                        };
+                        var renderTimelineSeconds = function(pop) {
+
+                            var currentTime = pop.currentTime();
+                            var duration = pop.duration();
+                            var durationRoundedUp = Math.ceil(duration * 1) / 1;
+
+                            var endTime = currentTime + 15;
+                            endTime = endTime > durationRoundedUp ? durationRoundedUp : endTime;
+
+                            var startTime = currentTime - 15;
+                            startTime = startTime < 0 ? 0 : startTime;
+
+                            for (var i = startTime; i < endTime; i++) {
+
+                                // Create a new div for this second and append to the timing container.
+                                $timingContainer.append($('<div class="second"><span>' + i + '</span></div>'));
+
+                            }
+
+                            //$timingContainer.width(scope.secondsRoundedUp * 100);
+
+                        };
+
+                        scope.$root.$on('video-ready', function($event, pop) {
+                            renderTimelineSeconds(pop);
+                            renderTimelineSubtitles(pop);
+                        });
+                        scope.$root.$on('video-timechanged', function($event, pop) {
+                            renderTimelineSeconds(pop);
+                            renderTimelineSubtitles(pop);
+                        });
 
                     }
                 };

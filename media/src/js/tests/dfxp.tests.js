@@ -241,6 +241,25 @@ describe('DFXP', function() {
 
         });
     });
+    describe('#cloneSubtitle()', function() {
+        it('should clone a node and return a jquery selection of the new node', function() {
+
+            var newSub1 = parser.addSubtitle(null, {'begin': 100}, 'Some text.');
+            var $clonedNewSub1 = parser.cloneSubtitle(newSub1, false);
+
+            // The cloned sub should have wiped out the text, but preserved attrs.
+            expect($clonedNewSub1.attr('begin')).toBe('100');
+            expect($clonedNewSub1.text()).toBe('');
+
+            var newSub2 = parser.addSubtitle(null, {'begin': 100}, 'Some text.');
+            var $clonedNewSub2 = parser.cloneSubtitle(newSub2, true);
+
+            // The cloned sub should have preserved the text and attrs.
+            expect($clonedNewSub2.attr('begin')).toBe('100');
+            expect($clonedNewSub2.text()).toBe('Some text.');
+
+        });
+    });
     describe('#content()', function() {
         it('should set text content of a subtitle', function() {
 
@@ -758,6 +777,54 @@ describe('DFXP', function() {
 
         });
     });
+    describe('#startTimeInTimeExpression()', function() {
+        it('should get the current start time for a subtitle in time expression', function() {
+
+            // Create a new subtitle with a specific start time.
+            var newSubtitle = parser.addSubtitle(null, {'begin': 1150.000}, '');
+
+            // Verify.
+            expect(parser.startTimeInTimeExpression.call(parser, newSubtitle)).toBe('00:00:01,150');
+
+        });
+    });
+    describe('#startTimeDisplay()', function() {
+        it('should get the current start time for a subtitle formatted for display', function() {
+
+            // Verify milliseconds handling.
+            var subtitle = parser.addSubtitle(null, {'begin': '050'}, '');
+            expect(parser.startTimeDisplay(subtitle)).toBe('0.050');
+
+            // Verify milliseconds handling.
+            var subtitle = parser.addSubtitle(null, {'begin': 100}, '');
+            expect(parser.startTimeDisplay(subtitle)).toBe('0.100');
+
+            // Verify seconds handling.
+            subtitle = parser.addSubtitle(null, {'begin': 1000}, '');
+            expect(parser.startTimeDisplay(subtitle)).toBe('1.000');
+
+            // Verify seconds handling.
+            subtitle = parser.addSubtitle(null, {'begin': 10000}, '');
+            expect(parser.startTimeDisplay(subtitle)).toBe('10.000');
+
+            // Verify minutes handling.
+            subtitle = parser.addSubtitle(null, {'begin': 100000}, '');
+            expect(parser.startTimeDisplay(subtitle)).toBe('1:40.000');
+
+            // Verify minutes handling.
+            subtitle = parser.addSubtitle(null, {'begin': 1000000}, '');
+            expect(parser.startTimeDisplay(subtitle)).toBe('16:40.000');
+
+            // Verify hours handling.
+            subtitle = parser.addSubtitle(null, {'begin': 10000000}, '');
+            expect(parser.startTimeDisplay(subtitle)).toBe('2:46:40.000');
+
+            // Verify hours handling.
+            subtitle = parser.addSubtitle(null, {'begin': 7459599}, '');
+            expect(parser.startTimeDisplay(subtitle)).toBe('2:04:19.599');
+
+        });
+    });
     describe('#subtitlesCount()', function() {
         it('should return the current number of subtitles', function() {
 
@@ -825,11 +892,14 @@ describe('DFXP', function() {
             
             // Add a mock subtitle with some Markdown styles.
             parser.addSubtitle(null, null, '**Test**');
+            
+            // Add a mock subtitle with some Markdown styles.
+            parser.addSubtitle(null, null, 'This is a **test**, I say.');
 
             // Get the XML string.
             var xmlString = parser.xmlToString(true, true);
 
-            expect(xmlString).toBe('<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" xmlns:tts="http://www.w3.org/ns/ttml#styling" xml:lang="en" xmlns:xml="http://www.w3.org/XML/1998/namespace"> <head> <metadata/> <styling xmlns:tts="http://www.w3.org/2006/10/ttaf1#styling"><style tts:textStyle="italic" xml:id="emphasis"/><style tts:fontWeight="bold" xml:id="strong"/><style tts:textDecoration="underline" xml:id="underlined"/></styling> <layout/> </head> <body region="subtitleArea">  <div><p begin="" end=""><span tts:fontWeight="bold">Test</span></p></div></body> </tt>');
+            expect(xmlString).toBe('<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" xmlns:tts="http://www.w3.org/ns/ttml#styling" xml:lang="en" xmlns:xml="http://www.w3.org/XML/1998/namespace"> <head> <metadata/> <styling xmlns:tts="http://www.w3.org/2006/10/ttaf1#styling"><style tts:textStyle="italic" xml:id="emphasis"/><style tts:fontWeight="bold" xml:id="strong"/><style tts:textDecoration="underline" xml:id="underlined"/></styling> <layout/> </head> <body region="subtitleArea">  <div><p begin="" end=""><span tts:fontWeight="bold">Test</span></p><p begin="" end="">This is a <span tts:fontWeight="bold">test</span>, I say.</p></div></body> </tt>');
 
         });
     });

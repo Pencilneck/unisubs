@@ -289,7 +289,7 @@ class Command(BaseCommand):
         with open(compiled_js, 'w') as compiled_js_file:
 
             # Include dependencies needed for DFXP parsing.
-            with open(os.path.join(JS_LIB, 'src', 'js', 'third-party', 'amara-jquery-1.8.2.min.js'), 'r') as jqueryjs_file:
+            with open(os.path.join(JS_LIB, 'src', 'js', 'third-party', 'amara-jquery.min.js'), 'r') as jqueryjs_file:
                 compiled_js_file.write(jqueryjs_file.read())
             with open(os.path.join(JS_LIB, 'src', 'js', 'dfxp', 'dfxp.js'), 'r') as dfxpjs_file:
                 compiled_js_file.write(dfxpjs_file.read())

@@ -1,0 +1,11 @@
+﻿[Script Info]
+Title: Jonathan Drori: Amiről azt hisszük, hogy tudjuk
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:04.00,Default,,0000,0000,0000,,Megpróbálom megmagyarázni, miért van az,
+Dialogue: 0,0:00:04.00,0:00:06.00,Default,,0000,0000,0000,,hogy talán nem értünk meg annyi mindent, mint képzeljük.
+Dialogue: 0,0:00:06.00,0:00:09.00,Default,,0000,0000,0000,,Négy kérdéssel szeretném kezdeni.
+Dialogue: 0,0:00:09.00,0:00:12.00,Default,,0000,0000,0000,,Ez nem valami éppen aktuális kulturális dolog.
+Dialogue: 0,0:00:12.00,0:00:14.00,Default,,0000,0000,0000,,Ez egy bennfentes vicc, mellesleg.
+Dialogue: 0,0:00:14.00,0:00:17.00,Default,,0000,0000,0000,,Ezt a négy kérdést valójában
+Dialogue: 0,0:00:17.00,0:00:20.00,Default,,0000,0000,0000,,még olyanok is nehéznek találják, akik elég sokat tudnak a természettudományokról.

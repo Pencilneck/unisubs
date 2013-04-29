@@ -55,7 +55,7 @@ unisubs.translate.TranslationList.prototype.createDom = function() {
     goog.array.forEach(
         this.originalWrapper['getSubtitles'](),
         function(originalNode, i) {
-            var editableCaption = map[i] || this.captionSet_.x['getSubtitle'](i);
+            var editableCaption = map[i] || this.captionSet_.x['getSubtitleByIndex'](i);
             if (!editableCaption){
                 editableCaption = this.captionSet_.addNewDependentSubtitle(
                     originalNode, this.originalWrapper, i);

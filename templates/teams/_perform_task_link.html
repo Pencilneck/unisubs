@@ -1,12 +1,13 @@
 {% load i18n %}
 
-{% if task.get_type_display == "Subtitle" or task.get_type_display == "Translate"%}
-    {% if task.get_subtitle_version %}
-        <a class="perform perform-task-{{ task.pk }}" href="">{% trans "Resume" %}</a>
-    {% else %}
-        <a class="perform perform-task-{{ task.pk }}" href="">{% trans "Start now" %}</a>
-    {% endif %}
+{% if task.get_subtitle_version %}
+    {% trans "Resume" as link_text%}
+{% else %}
+    {% trans "Start now" as link_text%}
+{% endif %} 
 
+{% if task.needs_start_dialog %}
+    <a class="perform perform-task-{{ task.pk }}" href="">{{ link_text }}</a>
     <script type="text/javascript">
         $('.perform-task-{{ task.pk }}').click(function() {
             var videoSource = unisubs.player.MediaSource.videoSourceForURL('{{ task.cached_video_url }}');
@@ -25,9 +26,5 @@
         });
     </script>
 {% else %}
-    {% if task.get_subtitle_version %}
-        <a class="perform" href="{{ task.get_perform_url }}">{% trans "Resume" %}</a>
-    {% else %}
-        <a class="perform" href="{{ task.get_perform_url }}">{% trans "Start now" %}</a>
-    {% endif %}
+    <a class="perform" href="{{ task.get_perform_url }}">{{ link_text }}</a>
 {% endif %}

@@ -21,7 +21,8 @@ from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
 from accountlinker.models import (
-    ThirdPartyAccount, YoutubeSyncRule, check_authorization, can_be_synced
+    ThirdPartyAccount, YoutubeSyncRule, check_authorization, can_be_synced,
+    add_amara_description_credit
 )
 from videos.models import Video, VideoUrl, SubtitleLanguage
 from teams.models import Team, TeamVideo
@@ -32,6 +33,7 @@ from apps.testhelpers import views as helpers
 
 from mock import Mock
 
+
 def _set_subtitles(video, language, original, complete, translations=[]):
     translations = [{'code': lang, 'is_original': False, 'is_complete': True,
                      'num_subs': 1} for lang in translations]
@@ -41,9 +43,11 @@ def _set_subtitles(video, language, original, complete, translations=[]):
 
     helpers._add_lang_to_video(video, data, None)
 
+
 def assert_update_subtitles(version_or_language, account):
     assert version_or_language != None
     assert account != None
+
 
 class AccountTest(TestCase):
     fixtures = ["staging_users.json", "staging_videos.json", "staging_teams.json"]
@@ -265,7 +269,7 @@ class AccountTest(TestCase):
 
         _set_subtitles(video, 'en', True, True, [])
         language = video.subtitle_language('en')
-        version = language.subtitleversion_set.all()[0]
+        version = language.subtitleversion_set.full()[0]
 
         youtube_type_mock = Mock(spec=YoutubeVideoType)
         video_type_registrar.video_type_for_url = Mock()
@@ -274,3 +278,26 @@ class AccountTest(TestCase):
         ThirdPartyAccount.objects.mirror_on_third_party(video, 'en', UPDATE_VERSION_ACTION, version)
 
         youtube_type_mock.update_subtitles.assert_called_once_with(version, tpa)
+
+    def test_credit(self):
+        old = 'abc'
+        url = 'http://test.com'
+        new = add_amara_description_credit(old, url)
+
+        self.assertTrue(new.startswith('abc'))
+        self.assertTrue(new.endswith(url))
+
+        new = add_amara_description_credit(old, url, prepend=True)
+        self.assertTrue(new.startswith('Help us caption and translate'))
+        self.assertTrue(new.endswith('abc'))
+
+        new = add_amara_description_credit(new, url)
+        self.assertTrue(new.startswith('Help us caption and translate'))
+        self.assertFalse(new.endswith('Help us caption and translate'))
+        self.assertEquals(1, new.count('Help us caption and translate'))
+
+        # And empty description
+        old = ''
+        new = add_amara_description_credit(old, url)
+
+        self.assertFalse(new == '')

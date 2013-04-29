@@ -63,7 +63,7 @@ class UnisubsPage(Page):
         self.logger.info('Log out of site')
         self.open_page('logout/?next=/videos/create')
 
-    def log_in(self, username, password):
+    def log_in(self, username, password, set_skip=True):
         """Log in with the specified account type - default as a no-priv user.
 
         """
@@ -79,14 +79,15 @@ class UnisubsPage(Page):
         session['_auth_user_id'] = unicode(user.pk)
         session['_auth_user_backend'] = u'auth.backends.CustomUserBackend'
         session.save()
-        self.logger.info("session saved: %s", session.session_key)
         self.browser.add_cookie({ u'domain': '%s:%s' % (host, port),
                                   u'name': u'sessionid',
                                   u'value': session.session_key,
                                   u'path': u'/',
                                   u'secure': False,
                                  })
-        self.logger.info("cookie saved")
+        self.logger.info("login cookie saved")
+        if set_skip:
+            self.set_skiphowto()
 
     def set_skiphowto(self):
         self.browser.add_cookie({ u'name': u'skiphowto', 

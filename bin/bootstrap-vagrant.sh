@@ -135,9 +135,9 @@ fi
 
 # Celery services -------------------------------------------------------------
 log "Restarting celeryd (if necessary)..."
-sudo service celeryd.vagrant status | grep running || sudo service celeryd.vagrant start
+sudo /etc/init.d/celeryd.vagrant restart
 log "Restarting celerycam (if necessary)..."
-sudo service celerycam.vagrant status | grep running || sudo service celerycam.vagrant start
+sudo /etc/init.d/celerycam.vagrant restart
 
 # Notice ----------------------------------------------------------------------
 tput setaf 4

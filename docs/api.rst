@@ -217,6 +217,7 @@ Creating Videos:
     :form video_url: The url for the video. Any url that Amara accepts will work here. You can send the URL for a file (e.g. http:///www.example.com/my-video.ogv) , or a link to one of our accepted providers (youtube, vimeo, dailymotion, blip.tv)
     :form title: The title for the video :form description: About this video
     :form duration: Duration in seconds
+    :form primary_audio_language_code: The language code representing main language spoken  on the video. This helps the UI to show the best title for that video, or set "Subtitle" taks in the right language from the get-go - optional.
 
 When submitting URLs of external providers (i.e. youtube, vimeo), the metadata
 (title, description, duration) can be fetched from them. If you're submitting a
@@ -317,6 +318,7 @@ Creating Video Languages:
     :form description: Localized description for this language - optional.
     :form is_original: Boolean indicating if this is the original language for the video. - optional - defaults to false.
     :form is_complete: Boolean indicating if the complete subtitling set is available for this language - optional, defaults to false.
+    :form is_original: If set to true, will mark this language as the primary audio language for the video ( see VideoResource) - optional, defaults to false.
 
 .. seealso::  To list available languages, see ``Language Resource``.
 

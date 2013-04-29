@@ -1,6 +1,8 @@
 # patched version of lib, fix for socket errors on rabbitmq
 # from http://code.google.com/p/py-amqplib/issues/detail?id=38
+# this will be removed after the rollout of amqp
 vendor/amqplib-1.0.2-patched.tar.gz
+amqp==1.0.8
 Django==1.4.3
 Fabric==1.4.0
 PIL==1.1.7

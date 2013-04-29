@@ -19,6 +19,7 @@
 
 from babelsubs.parsers.dfxp import DFXPParser
 from django.core.urlresolvers import reverse
+from django.utils.text import get_valid_filename
 from django.test import TestCase
 
 from apps.videos.tests.data import (
@@ -34,12 +35,25 @@ class DFXPTest(TestCase):
             'lang_pk': subtitle_language.pk
         })
         self.assertEqual(res.status_code, 200)
+        expected_filename = get_valid_filename(("%s.%s.%s" % (
+            subtitle_language.version().title,
+            subtitle_language.language_code,
+            format)))
+        expected_header = 'attachment; filename=%s' % expected_filename
+        self.assertEqual(res['Content-Disposition'] , expected_header)
+
         return res.content
 
     def test_dfxp_serializer(self):
         video = get_video()
         sl_en = make_subtitle_language(video, 'en')
-        make_subtitle_version(sl_en, [(100, 200, 'Here we go!')])
+        video.primary_audio_language_code = 'en'
+        video.save()
+        self.test_title = "This is a really long title used to make sure we are not truncating file names"
+        self.assertTrue(len(self.test_title) > 60)
+        make_subtitle_version(sl_en, [(100, 200, 'Here we go!')],
+                              title=self.test_title,
+        )
 
         content = self._download_subs(sl_en, 'dfxp')
         serialized = DFXPParser(content)

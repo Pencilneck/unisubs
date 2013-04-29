@@ -37,6 +37,7 @@ from apps.videos.types import video_type_registrar, VideoTypeError
 from apps.videos.types.youtube import yt_service
 from utils.forms import AjaxForm, EmailListField, UsernameListField, StripRegexField, FeedURLField, ReCaptchaField
 from utils.http import url_exists
+from utils.translation import get_language_choices
 
 ALL_LANGUAGES = [(val, _(name)) for val, name in settings.ALL_LANGUAGES]
 KB_SIZELIMIT = 512
@@ -144,7 +145,6 @@ href="mailto:%s">contact us</a>!""") % settings.FEEDBACK_EMAIL))
         for key, value in self.errors.items():
             output[key] = '/n'.join([force_unicode(i) for i in value])
         return output
-
 
 class UserTestResultForm(forms.ModelForm):
 

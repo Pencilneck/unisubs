@@ -139,12 +139,20 @@ def raise_exception(msg, **kwargs):
 def video_changed_tasks(video_pk, new_version_id=None, skip_third_party_sync=False):
     from videos import metadata_manager
     from videos.models import Video
-    from teams.models import TeamVideo
+
+    from teams.models import TeamVideo, BillingRecord
     metadata_manager.update_metadata(video_pk)
     if new_version_id is not None:
         send_new_version_notification(new_version_id)
         if not skip_third_party_sync:
             _update_captions_in_original_service(new_version_id)
+        try:
+            BillingRecord.objects.insert_record(
+                SubtitleVersion.objects.get(pk=new_version_id))
+        except Exception, e:
+            celery_logger.error("Could not add billing record", extra={
+                "version_pk": new_version_id,
+                "exception": str(e)})
 
     video = Video.objects.get(pk=video_pk)
 
@@ -208,7 +216,7 @@ def import_videos_from_feeds(urls, user_id=None, team_id=None):
         feed_parser = FeedParser(url)
 
         for vt, info, entry in feed_parser.items():
-            if not vt: 
+            if not vt:
                 continue
 
             videos.append(Video.get_or_create_for_url(vt=vt, user=user))
@@ -406,12 +414,13 @@ def delete_captions_in_original_service(language_pk):
     from .videos.types import DELETE_LANGUAGE_ACTION
     from accountlinker.models import ThirdPartyAccount
     try:
-        language = SubtitleLanguage.objects.select_related("video").get(pk=language_pk)
+        language = (SubtitleLanguage.objects.select_related("video")
+                                            .get(pk=language_pk))
     except SubtitleLanguage.DoesNotExist:
         return
-    
+
     ThirdPartyAccount.objects.mirror_on_third_party(
-        language.video, language.language, DELETE_LANGUAGE_ACTION)
+        language.video, language.language_code, DELETE_LANGUAGE_ACTION)
 
 @task
 def delete_captions_in_original_service_by_code(language_code, video_pk):
@@ -458,6 +467,24 @@ def gauge_videos():
 # def gauge_videos_long():
 #     Gauge('videos.Subtitle').report(Subtitle.objects.count())
 
+
+@periodic_task(run_every=timedelta(seconds=60))
+def gague_billing_records():
+    from teams.models import BillingRecord
+    Gauge('teams.BillingRecord').report(BillingRecord.objects.count())
+
+
+@task
+def sync_latest_versions_for_video(video_pk):
+    video = Video.objects.get(pk=video_pk)
+
+    for lang in video.newsubtitlelanguage_set.all():
+        # use full, as the final mirror_to_third party will
+        # take care of checking if this version *should* be uplaoded
+        # Else, we'll re-sync the last public version when new
+        # drafts are saved
+        latest = lang.get_tip(full=True)
+        upload_subtitles_to_original_service.delay(latest.pk)
 
 @task
 def _add_amara_description_credit_to_youtube_vurl(vurl_pk):
@@ -510,3 +537,4 @@ def add_amara_description_credit_to_youtube_video(video_id):
 
     for vurl in youtube_urls:
         _add_amara_description_credit_to_youtube_vurl.delay(vurl.pk)
+

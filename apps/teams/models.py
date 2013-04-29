@@ -17,7 +17,9 @@
 # http://www.gnu.org/licenses/agpl-3.0.html.
 import datetime
 import logging
+from math import ceil
 import csv
+from itertools import groupby
 
 from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
@@ -39,52 +41,36 @@ from auth.models import CustomUser as User
 from auth.providers import get_authentication_provider
 from messages import tasks as notifier
 from apps.subtitles import shims
+from apps.subtitles.signals import language_deleted
 from teams.moderation_const import WAITING_MODERATION, UNMODERATED, APPROVED
 from teams.permissions_const import (
     TEAM_PERMISSIONS, PROJECT_PERMISSIONS, ROLE_OWNER, ROLE_ADMIN, ROLE_MANAGER,
     ROLE_CONTRIBUTOR
 )
-from videos.tasks import upload_subtitles_to_original_service
+from videos.tasks import (
+    upload_subtitles_to_original_service, sync_latest_versions_for_video
+)
 from teams.tasks import update_one_team_video
 from utils import DEFAULT_PROTOCOL
 from utils.amazon import S3EnabledImageField, S3EnabledFileField
 from utils.panslugify import pan_slugify
 from utils.searching import get_terms
-from videos.models import Video, SubtitleVersion
+from videos.models import Video, SubtitleVersion, SubtitleLanguage
 from subtitles.models import (
     SubtitleVersion as NewSubtitleVersion,
-    SubtitleLanguage as NewSubtitleLanguage
+    SubtitleLanguage as NewSubtitleLanguage,
+    ORIGIN_IMPORTED
 )
 from subtitles import pipeline
-from videos.models import Video, SubtitleLanguage, SubtitleVersion
-from subtitles.models import (
-    SubtitleVersion as NewSubtitleVersion,
-)
 
 from functools import partial
 
 logger = logging.getLogger(__name__)
+celery_logger = logging.getLogger('celery.task')
 
+BILLING_CUTOFF = getattr(settings, 'BILLING_CUTOFF', None)
 ALL_LANGUAGES = [(val, _(name))for val, name in settings.ALL_LANGUAGES]
 VALID_LANGUAGE_CODES = [unicode(x[0]) for x in ALL_LANGUAGES]
-
-def publicize_version(subtitle_version, author):
-    """Create a new SubtitleVersion that's a public copy of the given version.
-
-    author should be the person making this happen, *not* the author of the
-    original version.
-
-    """
-    pipeline.add_subtitles(
-        video=subtitle_version.video,
-        language_code=subtitle_version.language_code,
-        subtitles=subtitle_version.get_subtitles(),
-        title=subtitle_version.title,
-        description=subtitle_version.description,
-        author=author,
-        visibility='public',
-    )
-
 
 # Teams
 class TeamManager(models.Manager):
@@ -531,19 +517,6 @@ class Team(models.Model):
         """
         return TeamLanguagePreference.objects.get_readable(self)
 
-
-    # Unpublishing
-    def unpublishing_enabled(self):
-        '''Return whether unpublishing is enabled for this team.
-
-        At the moment unpublishing is only available if the team has reviewing
-        and/or approving enabled.
-
-        '''
-        w = self.get_workflow()
-        return True if w.review_enabled or w.approve_enabled else False
-
-
 # This needs to be constructed after the model definition since we need a
 # reference to the class itself.
 Team._meta.permissions = TEAM_PERMISSIONS
@@ -690,9 +663,6 @@ class TeamVideo(models.Model):
         if video_thumb:
             return video_thumb
 
-        if self.team.logo:
-            return self.team.logo_thumbnail()
-
         return "%simages/video-no-thumbnail-medium.png" % settings.STATIC_URL_BASE
 
     def _original_language(self):
@@ -747,9 +717,12 @@ class TeamVideo(models.Model):
 
     def subtitles_finished(self):
         """Return whether at least one set of subtitles has been finished for this video."""
-        return (self.subtitles_started() and
-                self.video.subtitle_language() and
-                self.video.subtitle_language().is_complete_and_synced())
+        qs = (self.video.newsubtitlelanguage_set.having_public_versions()
+              .filter(subtitles_complete=True))
+        for lang in qs:
+            if lang.is_synced():
+                return True
+        return False
 
     def get_workflow(self):
         """Return the appropriate Workflow for this TeamVideo."""
@@ -783,7 +756,7 @@ class TeamVideo(models.Model):
         # TODO: Dedupe this and the team video delete signal.
         video = self.video
 
-        video.newsubtitleversion_set.all().update(visibility='public')
+        video.newsubtitleversion_set.extant().update(visibility='public')
         video.is_public = new_team.is_visible
         video.moderated_by = new_team if new_team.moderates_videos() else None
         video.save()
@@ -896,9 +869,21 @@ def team_video_delete(sender, instance, **kwargs):
 
         metadata_manager.update_metadata(video.pk)
         video.update_search_index()
+        sync_latest_versions_for_video.delay(video.pk)
     except Video.DoesNotExist:
         pass
 
+def on_language_deleted(sender, **kwargs):
+    """When a language is deleted, delete all tasks associated with it."""
+    team_video = sender.video.get_team_video()
+    if not team_video:
+        return
+    Task.objects.filter(team_video=team_video,
+                        language=sender.language_code).delete()
+    # check if there are no more source languages for the video, and in that
+    # case delete all transcribe tasks
+    if not sender.video.has_public_version():
+        Task.objects.filter(team_video=team_video).delete()
 
 def team_video_autocreate_task(sender, instance, created, raw, **kwargs):
     """Create subtitle/translation tasks for a newly added TeamVideo, if necessary."""
@@ -927,7 +912,7 @@ post_save.connect(team_video_autocreate_task, TeamVideo, dispatch_uid='teams.tea
 post_save.connect(team_video_add_video_moderation, TeamVideo, dispatch_uid='teams.teamvideo.team_video_add_video_moderation')
 post_delete.connect(team_video_delete, TeamVideo, dispatch_uid="teams.teamvideo.team_video_delete")
 post_delete.connect(team_video_rm_video_moderation, TeamVideo, dispatch_uid="teams.teamvideo.team_video_rm_video_moderation")
-
+language_deleted.connect(on_language_deleted, dispatch_uid="teams.subtitlelanguage.language_deleted")
 
 # TeamMember
 class TeamMemberManager(models.Manager):
@@ -956,6 +941,8 @@ class TeamMember(models.Model):
     team = models.ForeignKey(Team, related_name='members')
     user = models.ForeignKey(User, related_name='team_members')
     role = models.CharField(max_length=16, default=ROLE_CONTRIBUTOR, choices=ROLES, db_index=True)
+    created = models.DateTimeField(default=datetime.datetime.now, null=True,
+            blank=True)
 
     objects = TeamMemberManager()
 
@@ -1772,7 +1759,7 @@ class Task(models.Model):
 
     def complete(self):
         '''Mark as complete and return the next task in the process if applicable.'''
-        assert self.new_subtitle_version != None, 'to complete a task, subtitle version cannot be None'
+        assert (self.new_subtitle_version != None and self.new_subtitle_version.pk != None), 'to complete a task, subtitle version cannot be None'
 
         self.completed = datetime.datetime.now()
         self.save()
@@ -1866,7 +1853,7 @@ class Task(models.Model):
         else:
             # Subtitle task is done, and there is no approval or review
             # required, so we mark the version as approved.
-            publicize_version(sv, self.assignee)
+            sv.publish()
 
             # We need to make sure this is updated correctly here.
             from apps.videos import metadata_manager
@@ -1877,6 +1864,8 @@ class Task(models.Model):
                 _create_translation_tasks(self.team_video, sv)
 
             upload_subtitles_to_original_service.delay(sv.pk)
+            task = None
+        return task
 
     def _complete_translate(self):
         """Handle the messy details of completing a translate task."""
@@ -1903,7 +1892,7 @@ class Task(models.Model):
                 task.set_expiration()
                 task.save()
         else:
-            publicize_version(sv, self.assignee)
+            sv.publish()
 
             # We need to make sure this is updated correctly here.
             from apps.videos import metadata_manager
@@ -1945,7 +1934,7 @@ class Task(models.Model):
             # determines whether the subtitles go public.
             if approval:
                 # Make these subtitles public!
-                publicize_version(self.new_subtitle_version, self.assignee)
+                self.new_subtitle_version.publish()
 
                 # If the subtitles are okay, go ahead and autocreate translation
                 # tasks if necessary.
@@ -1975,7 +1964,7 @@ class Task(models.Model):
 
         if approval:
             # The subtitles are acceptable, so make them public!
-            publicize_version(self.new_subtitle_version, self.assignee)
+            self.new_subtitle_version.publish()
 
             # Create translation tasks if necessary.
             if self.workflow.autocreate_translate:
@@ -2025,6 +2014,22 @@ class Task(models.Model):
 
         return base_url + "?t=%s" % self.pk
 
+    def needs_start_dialog(self):
+        """Check if this task needs the start dialog.
+
+        The only time we need it is when a user is starting a
+        transcribe/translate task.  We don't need it for review/approval, or
+        if the task is being resumed.
+        """
+        # We use the start dialog for select several things:
+        #   - primary audio language
+        #   - language of the subtitles
+        #   - language to translate from
+        # If we have a SubtitleVersion to use, then we have all the info we
+        # need and can skip the dialog.
+        return (self.new_review_base_version is None and
+                self.new_subtitle_version is None)
+
     def get_reviewer(self):
         """For Approve tasks, return the last user to Review these subtitles.
 
@@ -2060,29 +2065,26 @@ class Task(models.Model):
 
     def is_blocked(self):
         """Return whether this task is "blocked".
-
         "Blocked" means that it's a translation task but the source language
         isn't ready to be translated yet.
-
         """
+        subtitle_version = self.get_subtitle_version()
+        if not subtitle_version:
+            return False
+        source_language = subtitle_version.subtitle_language.get_translation_source_language()
+        if not source_language:
+            return False
+        can_perform = (source_language and
+                       source_language.is_complete_and_synced())
+
         if self.get_type_display() != 'Translate':
-            return False
-
-        sv = self.get_subtitle_version()
-
-        if not sv:
-            return False
-
-        source_language = sv.subtitle_language.get_translation_source_language()
-
-        complete = (source_language and
-                    source_language.subtitles_complete and
-                    source_language.get_tip().get_subtitles().fully_synced)
-
-        if complete:
-            return False
-        else:
-            return True
+            if self.get_type_display() in ('Review', 'Approve'):
+                # review and approve tasks will be blocked if they're
+                # a translation and they have a draft and the source
+                # language no longer  has published version
+                if not can_perform or source_language.language_code == self.language:
+                    return True
+        return not can_perform
 
     def save(self, update_team_video_index=True, *args, **kwargs):
         is_review_or_approve = self.get_type_display() in ('Review', 'Approve')
@@ -2425,12 +2427,19 @@ class TeamNotificationSetting(models.Model):
 
 
 class BillingReport(models.Model):
+    TYPE_OLD = 1
+    TYPE_NEW = 2
+    TYPE_CHOICES = (
+        (TYPE_OLD, 'Old model'),
+        (TYPE_NEW, 'New model'),
+    )
     team = models.ForeignKey(Team)
     start_date = models.DateField()
     end_date = models.DateField()
     csv_file = S3EnabledFileField(blank=True, null=True,
             upload_to='teams/billing/')
     processed = models.DateTimeField(blank=True, null=True)
+    type = models.IntegerField(choices=TYPE_CHOICES, default=TYPE_OLD)
 
     def __unicode__(self):
         return "%s (%s - %s)" % (self.team.slug,
@@ -2449,32 +2458,39 @@ class BillingReport(models.Model):
         if not version:
             return False
 
-        if version.moderation_status not in [APPROVED, UNMODERATED]:
+        # for moderated team videos we want to be sure that they're published
+        if not version.is_public():
             return False
 
-        # 97% is done according to our contracts
-        if version.moderation_status == UNMODERATED:
-            if not language.is_complete and language.percent_done < 97:
+        # teams that require no moderation we bill if the user says they're
+        # complete
+        if not self.team.is_moderated:
+            if language.in_progress():
                 return False
 
-        if (version.datetime_started <= start or
-                version.datetime_started >= end):
+        if (version.created <= start or
+                version.created >= end):
             return False
 
         return True
 
-    def _get_lang_data(self, languages, start_date):
+    def _get_lang_data(self, languages, from_date):
         workflow = self.team.get_workflow()
 
         # TODO:
         # These do the same for now.  If a workflow is enabled, we should get
         # the first approved version.  Not sure how to do that yet.
         imported, crowd_created = self._separate_languages(languages)
+        print imported, crowd_created
 
+        # TODO: Are we going to count deleted versions here?  If so, the
+        # get_tip() calls here may need full=True to get deleted tips...
+        for l in crowd_created:
+            print "lang%s ; first poublic:%s" % (l, l.first_public_version())
         if workflow.approve_enabled:
-            imported_data = [(language, language.get_tip())
+            imported_data = [(language, language.first_public_version())
                                     for language in imported]
-            crowd_created_data = [(language, language.get_tip())
+            crowd_created_data = [(language, language.first_public_version())
                                     for language in crowd_created]
         else:
             imported_data = [(language, language.get_tip()) for
@@ -2486,8 +2502,10 @@ class BillingReport(models.Model):
 
         created_result = []
 
+        # now make sure we don't have any versions from before the
+        # from_date
         for lang, ver in crowd_created_data:
-            if ver and ver.created < start_date:
+            if ver and ver.created < from_date:
                 old_version_counter += 1
                 continue
 
@@ -2508,29 +2526,24 @@ class BillingReport(models.Model):
         Crowd created language is a language
         * that is not imported
         """
+        from videos.types.youtube import FROM_YOUTUBE_MARKER
         imported = []
         crowd_created = []
 
         for lang in languages:
             try:
-                v = lang.subtitleversion_set.filter(version_no=0)[0]
+                v = lang.subtitleversion_set.order_by('version_number')[0]
             except IndexError:
                 # Throw away languages that don't have a zero version.
                 continue
 
-            if lang.language == 'en':
+            if lang.language_code == 'en':
                 crowd_created.append(lang)
-                continue
-
-            if v.note == 'From youtube':
+            elif v.note == FROM_YOUTUBE_MARKER or v.origin == ORIGIN_IMPORTED or \
+                v.created < self.team.created:
                 imported.append(lang)
-                continue
-
-            if v.datetime_started < self.team.created:
-                imported.append(lang)
-                continue
-
-            crowd_created.append(lang)
+            else:
+                crowd_created.append(lang)
 
         return imported, crowd_created
 
@@ -2582,7 +2595,7 @@ class BillingReport(models.Model):
         return rows
 
     def _prepare_row(self, tv, language, version, source, counter, host):
-        subs = version.ordered_subtitles()
+        subs = version.get_subtitles()
 
         if len(subs) == 0:
             return None
@@ -2601,14 +2614,14 @@ class BillingReport(models.Model):
         return [
             tv.video.title_display_unabridged().encode('utf-8'),
             host + tv.video.get_absolute_url(),
-            language.language,
+            language.language_code,
             source,
             round((float(end) - float(start)) / (60 * 1000), 2),
-            version.datetime_started.strftime("%Y-%m-%d %H:%M:%S"),
+            version.created.strftime("%Y-%m-%d %H:%M:%S"),
             counter or ''
         ]
 
-    def process(self):
+    def generate_rows_type_old(self):
         domain = Site.objects.get_current().domain
         protocol = getattr(settings, 'DEFAULT_PROTOCOL')
         host = '%s://%s' % (protocol, domain)
@@ -2616,10 +2629,21 @@ class BillingReport(models.Model):
         header = ['Video title', 'Video URL', 'Video language', 'Source',
                 'Billable minutes', 'Version created', 'Language number']
 
-        rows = self._get_row_data(host, header)
-
-        fn = '/tmp/bill-%s-%s-%s-%s.csv' % (self.team.slug, self.start_str,
-                self.end_str, self.pk)
+        return  self._get_row_data(host, header)
+    def process(self):
+        """
+        Generate the correct rows (including headers), saves it to a tempo file,
+        then set's that file to the csv_file property, which if , using the S3
+        storage will take care of exporting it to s3.
+        """
+        if self.type == BillingReport.TYPE_OLD:
+            rows = self.generate_rows_type_old()
+        elif self.type == BillingReport.TYPE_NEW:
+            rows = BillingRecord.objects.csv_report_for_team(self.team,
+                                                             self.start_date,
+                                                             self.end_date)
+        fn = '/tmp/bill-%s-%s-%s-%s-%s.csv' % (self.team.slug, self.start_str,
+                self.end_str, self.get_type_display(), self.pk)
 
         with open(fn, 'w') as f:
             writer = csv.writer(f)
@@ -2628,7 +2652,6 @@ class BillingReport(models.Model):
         self.csv_file = File(open(fn, 'r'))
         self.processed = datetime.datetime.utcnow()
         self.save()
-
     @property
     def start_str(self):
         return self.start_date.strftime("%Y%m%d")
@@ -2637,6 +2660,185 @@ class BillingReport(models.Model):
     def end_str(self):
         return self.end_date.strftime("%Y%m%d")
 
+
+class BillingRecordManager(models.Manager):
+
+    def data_for_team(self, team, start, end):
+        return self.filter(team=team, created__gte=start, created__lte=end)
+
+    def csv_report_for_team(self, team, start, end, add_header=True):
+        all_records = self.data_for_team(team, start, end)
+
+        header = [
+            'Video ID',
+            'Language',
+            'Minutes',
+            'Original',
+            'Team',
+            'Created',
+            'Source',
+            'User'
+        ]
+
+        if add_header:
+            rows = [header]
+        else:
+            rows = []
+
+        for video, records in groupby(all_records, lambda r: r.video):
+            for r in records:
+                rows.append([
+                    video.video_id,
+                    r.new_subtitle_language.language_code,
+                    r.minutes,
+                    r.is_original,
+                    r.team.slug,
+                    r.created.strftime('%Y-%m-%d %H:%M:%S'),
+                    r.source,
+                    r.user.username
+                ])
+
+        return rows
+
+    def insert_records_for_translations(self, billing_record):
+        """
+        IF you've translated from an incomplete language, and later on that
+        language is completed, we must check if any translations are now
+        complete and therefore should have billing records with them
+        """
+        translations = billing_record.new_subtitle_language.get_dependent_subtitle_languages()
+        inserted = []
+        for translation in translations:
+            version = translation.get_tip(public=False)
+            if version:
+               inserted.append(self.insert_record(version))
+        return filter(bool, inserted)
+
+    def insert_record(self, version):
+        """
+        Figures out if this version qualifies for a billing record, and
+        if so creates one. This should be self contained, e.g. safe to call
+        for any version. No records should be created if not needed, and it
+        won't create multiples.
+
+        If this language has translations it will check if any of those are now
+        eligible for BillingRecords and create one accordingly.
+        """
+        from teams.models import BillingRecord
+
+        celery_logger.debug('insert billing record')
+
+        language = version.subtitle_language
+        video = language.video
+        tv = video.get_team_video()
+
+        if not tv:
+            celery_logger.debug('not a team video')
+            return
+
+        if not language.is_complete_and_synced(public=False):
+            celery_logger.debug('language not complete')
+            return
+
+
+        try:
+            # we already have a record
+            previous_record = BillingRecord.objects.get(video=video,
+                            new_subtitle_language=language)
+            # make sure we update it
+            celery_logger.debug('a billing record for this language exists')
+            previous_record.is_original = \
+                video.primary_audio_language_code == language.language_code
+            previous_record.save()
+            return
+        except BillingRecord.DoesNotExist:
+            pass
+
+
+        if NewSubtitleVersion.objects.filter(
+                subtitle_language=language,
+                created__lt=BILLING_CUTOFF).exclude(
+                pk=version.pk).exists():
+            celery_logger.debug('an older version exists')
+            return
+
+        is_original = language.is_primary_audio_language()
+        source = version.origin
+        team = tv.team
+
+        new_record = BillingRecord.objects.create(
+            video=video,
+            new_subtitle_version=version,
+            new_subtitle_language=language,
+            is_original=is_original, team=team,
+            created=version.created,
+            source=source,
+            user=version.author)
+        from_translations = self.insert_records_for_translations(new_record)
+        return new_record, from_translations
+
+
+class BillingRecord(models.Model):
+    video = models.ForeignKey(Video)
+
+    subtitle_version = models.ForeignKey(SubtitleVersion, null=True,
+            blank=True)
+    new_subtitle_version = models.ForeignKey(NewSubtitleVersion, null=True,
+            blank=True)
+
+    subtitle_language = models.ForeignKey(SubtitleLanguage, null=True,
+            blank=True)
+    new_subtitle_language = models.ForeignKey(NewSubtitleLanguage, null=True,
+            blank=True)
+
+    minutes = models.FloatField(blank=True, null=True)
+    is_original = models.BooleanField()
+    team = models.ForeignKey(Team)
+    created = models.DateTimeField()
+    source = models.CharField(max_length=255)
+    user = models.ForeignKey(User)
+
+    objects = BillingRecordManager()
+
+    class Meta:
+        unique_together = ('video', 'new_subtitle_language')
+
+
+    def __unicode__(self):
+        return "%s - %s" % (self.video.video_id,
+                self.new_subtitle_language.language_code)
+
+    def save(self, *args, **kwargs):
+        if not self.minutes and self.minutes != 0.0:
+            self.minutes = self.get_minutes()
+
+        assert self.minutes is not None
+
+        return super(BillingRecord, self).save(*args, **kwargs)
+
+    def get_minutes(self):
+        """
+        Return the number of minutes the subtitles specified in `version`
+        cover as an int.
+        """
+        subs = self.new_subtitle_version.get_subtitles()
+
+        if len(subs) == 0:
+            return 0
+
+        start = subs[0].start_time
+        end = subs[-1].end_time
+
+        # The -1 value for the end_time isn't allowed anymore but some
+        # legacy data will still have it.
+        if end == -1:
+            end = subs[-1].star_time
+
+        if not end:
+            end = subs[-1].start_time
+        duration_seconds =  (end - start) / 1000.0
+        minutes = duration_seconds/60.0
+        return  int(ceil(minutes))
 
 class Partner(models.Model):
     name = models.CharField(_(u'name'), max_length=250, unique=True)

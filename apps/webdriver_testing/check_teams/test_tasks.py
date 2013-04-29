@@ -128,13 +128,7 @@ class TestCaseAutomaticTasks(WebdriverTestCase):
             UserLangFactory(user=cls.contributor, language=lang)
         cls.subs_file = os.path.join(os.path.dirname(os.path.abspath(__file__)
                                      ), 'oneline.txt')
-
-
-    def setUp(self):
-        self.tasks_tab.open_team_page(self.team.slug)
-        self.tasks_tab.handle_js_alert('accept')
-        self.tasks_tab.set_skiphowto()
-
+        cls.tasks_tab.open_team_page(cls.team.slug)
 
     def tearDown(self):
         if self.team.subtitle_policy > 10:
@@ -142,7 +136,9 @@ class TestCaseAutomaticTasks(WebdriverTestCase):
             self.team.save() 
         if self.team.translate_policy > 10:
             self.team.translate_policy = 10
-            self.team.save() 
+            self.team.save()
+        self.tasks_tab.open_team_page(self.team.slug)
+        self.tasks_tab.handle_js_alert('accept')
 
 
     def test_transcription__perform(self):
@@ -189,7 +185,6 @@ class TestCaseAutomaticTasks(WebdriverTestCase):
                                  % self.team.slug)
         self.tasks_tab.perform_assigned_task('Transcribe English Subtitles', 
                                              tv.title)
-        self.create_modal.lang_selection(new_language='English (incomplete)')
         self.assertEqual('Typing', self.sub_editor.dialog_title())
         
     def test_transcription__permissions(self):
@@ -326,7 +321,7 @@ class TestCaseModeratedTasks(WebdriverTestCase):
             user = cls.owner,
             ).team
 
-        WorkflowFactory.create(
+        cls.workflow = WorkflowFactory.create(
             team = cls.team,
             autocreate_subtitle = True,
             autocreate_translate = True,
@@ -357,10 +352,11 @@ class TestCaseModeratedTasks(WebdriverTestCase):
 
     def setUp(self):
         self.tasks_tab.open_team_page(self.team.slug)
-        self.tasks_tab.set_skiphowto()
 
     def tearDown(self):
-        self.browser.get_screenshot_as_file('MYTMP/%s.png' % self.id())
+        if self.workflow.approve_allowed != 10:
+            self.workflow.approve_allowed = 10
+            self.workflow.save()
 
     def test_submit_transcript__creates_review_task(self):
         """Review task is created on transcription submission. """
@@ -591,7 +587,6 @@ class TestCaseModeratedTasks(WebdriverTestCase):
         self.complete_review_task(tv, 20)
         self.complete_approve_task(tv, 30)
 
-        #self.logger.info(dir(task))
         self.tasks_tab.log_in(self.manager, 'password')
         self.tasks_tab.open_page('teams/%s/tasks/?lang=all&assignee=anyone'
                                  % self.team.slug)
@@ -652,7 +647,8 @@ class TestCaseModeratedTasks(WebdriverTestCase):
                 user=dict(username=self.contributor.username, 
                           password='password'))
         self.complete_review_task(tv, 20)
-        self.complete_approve_task(tv, 20)
+        if self.workflow.approve_enabled:
+            self.complete_approve_task(tv, 20)
         return video, tv
 
     def upload_translation(self, video):
@@ -669,6 +665,7 @@ class TestCaseModeratedTasks(WebdriverTestCase):
                 data=data,
                 user=dict(username=self.contributor.username, 
                           password='password'))
+
     def complete_review_task(self, tv, status_code):
         """Complete the review task, 20 for approve, 30 for reject.
  
@@ -830,4 +827,26 @@ class TestCaseModeratedTasks(WebdriverTestCase):
         self.assertFalse(self.tasks_tab.task_present(
                 'Approve Swedish Subtitles', video.title))
 
+    def test_draft__guest_translate(self):
+        """Translate policy: members, guest has no new translation in menu."""
 
+        """Guest can not translate published subtitles."""
+        video = self.data_utils.create_video()
+        tv = TeamVideoFactory(team=self.team, added_by=self.owner, 
+                         video=video)
+        data = {'language_code': 'en',
+                'video': video.pk,
+                'primary_audio_language_code': 'en',
+                'draft': open('apps/webdriver_testing/subtitle_data/'
+                              'Timed_text.en.srt'),
+                'is_complete': True,
+                'complete': 1
+               }
+
+        self.data_utils.upload_subs(
+                video, 
+                data=data,
+                user=dict(username=self.contributor.username, 
+                          password='password'))
+        self.video_lang_pg.open_video_lang_page(video.video_id, 'en')
+        self.assertFalse(self.video_lang_pg.displays_add_subtitles())

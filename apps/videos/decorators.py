@@ -38,7 +38,7 @@ def get_video_revision(func):
     for the user on that request.
     """
     def wrapper(request, video_id=None, pk=None, *args, **kwargs):
-        version = get_object_or_404(SubtitleVersion, pk=pk)
+        version = get_object_or_404(SubtitleVersion.objects.extant(), pk=pk)
         id = video_id if video_id else version.video.video_id
         video = get_object_or_404(Video, video_id=id)
 

@@ -19,11 +19,13 @@
 
 """Basic sanity tests to make sure the subtitle models aren't completely broken."""
 
+import os
+
+from babelsubs.generators.srt import SRTGenerator
+
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
-
-from babelsubs.storage import SubtitleSet
-
 from apps.auth.models import CustomUser as User
 from apps.subtitles.forms import SubtitlesUploadForm
 from apps.subtitles.tests.utils import (
@@ -37,7 +39,7 @@ class SubtitleUploadFormTest(TestCase):
         self.en = make_sl(self.video, 'en')
         self.fr = make_sl(self.video, 'fr')
         self.de = make_sl(self.video, 'de')
-        self.user = User.objects.get_or_create(username='admin')
+        self.user = User.objects.get_or_create(username='admin')[0]
 
     def test_verify_no_translation_conflict(self):
         # we'll have baseline subs in English and German.
@@ -45,13 +47,41 @@ class SubtitleUploadFormTest(TestCase):
         # we try to upload French from English, should fail
         en_version = self.en.add_version(subtitles=make_subtitle_set('en'))
         de_version = self.de.add_version(subtitles=make_subtitle_set('ge'))
-        fr_version = self.fr.add_version(subtitles=make_subtitle_set('fr'), parents=[de_version])
+        fr_version = self.fr.add_version(subtitles=make_subtitle_set('fr'),
+                                         parents=[de_version])
 
         self.fr = refresh(self.fr)
-        self.assertEqual(self.fr.subtitleversion_set.count(), 1)
+        self.assertEqual(self.fr.subtitleversion_set.full().count(), 1)
         self.assertEqual(self.fr.get_translation_source_language_code(), 'de')
         f = SubtitlesUploadForm(self.user, self.video)
         self.assertRaises(ValidationError, f._verify_no_translation_conflict, self.fr, 'en')
 
+        # Shut up, Pyflakes.
+        assert en_version and de_version and fr_version
 
+    def test_unicode_in_and_out(self):
+        # load the srt file
+        app_dir =os.path.join(os.path.split(os.path.dirname(__file__))[0], 'fixtures')
+        rst_data = open(os.path.join(app_dir,  'unicode.srt'), 'r')
+        # upload it
+        form = SubtitlesUploadForm(
+            self.user,
+            self.video,
+            True,
+            data = {
+                'language_code': 'en',
+            },
+            files={'draft': SimpleUploadedFile(rst_data.name, rst_data.read())}
+        )
+        self.assertTrue(form.is_valid())
+        version = form.save()
+        # get what's stored to make sure we didn't screw up unicode chars
+        storage = version.get_subtitles()
+        subs = [x for x in storage.subtitle_items()]
+        expected_text = u"Ciò che voglio fare oggi"
+        # it's there represented on the dfxp
+        self.assertEqual(subs[0].text, expected_text)
+        generated = unicode(SRTGenerator(storage))
+        # when outputting it, we're getting the same thing back
+        self.assertIn(expected_text, generated)
 

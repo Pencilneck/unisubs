@@ -584,14 +584,14 @@ def send_reject_notification(task_pk, sent_back):
         return False
 
     subject = ugettext(u"Your subtitles were not accepted")
-    user = task.subtitle_version.user
+    user = task.new_subtitle_version.user
     task_language = get_language_label(task.language)
     reviewer = task.assignee
     video = task.team_video.video
     subs_url = "%s%s" % (get_url_base(), reverse("videos:translation_history", kwargs={
         'video_id': video.video_id,
         'lang': task.language,
-        'lang_id': task.subtitle_version.language.pk,
+        'lang_id': task.new_subtitle_version.subtitle_language.pk,
 
     }))
     reviewer_message_url = "%s%s?user=%s" % (
@@ -599,7 +599,7 @@ def send_reject_notification(task_pk, sent_back):
 
     context = {
         "team":task.team,
-        "title": task.subtitle_version.language.get_title(),
+        "title": task.new_subtitle_version.subtitle_language.get_title(),
         "user":user,
         "task_language": task_language,
         "url_base":get_url_base(),
@@ -623,7 +623,7 @@ def send_reject_notification(task_pk, sent_back):
     template_name = "messages/email/team-task-rejected.html"
     Meter('templated-emails-sent-by-type.teams.task-rejected').inc()
     email_res =  send_templated_email(user, subject, template_name, context)
-    Action.create_rejected_video_handler(task.subtitle_version, reviewer)
+    Action.create_rejected_video_handler(task.new_subtitle_version, reviewer)
     return msg, email_res
 
 COMMENT_MAX_LENGTH = getattr(settings,'COMMENT_MAX_LENGTH', 3000)
@@ -681,8 +681,8 @@ def send_video_comment_notification(comment_pk_or_instance, version_pk=None):
     if version:
         version_url = universal_url("videos:subtitleversion_detail", kwargs={
             'video_id': version.video.video_id,
-            'lang': version.language.language_code,
-            'lang_id': version.language.pk,
+            'lang': version.subtitle_language.language_code,
+            'lang_id': version.subtitle_language.pk,
             'version_id': version.pk,
         })
     else:

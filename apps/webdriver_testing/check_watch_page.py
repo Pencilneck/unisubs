@@ -66,12 +66,8 @@ class TestCaseWatchPageSearch(WebdriverTestCase):
         """Search for sub content with non-ascii char strings.
  
         """
-        
-        #Search for: chinese chars by opening entering the text via javascript
-        #because webdriver can't type those characters.
-        self.browser.execute_script("document.getElementsByName"
-                      "('q')[1].value='不过这四个问题，事实上'")
-        results_pg = self.watch_pg.advanced_search()
+        test_text = u'不过这四个问题'
+        results_pg = self.watch_pg.basic_search(test_text)
         self.assertTrue(results_pg.search_has_results())
 
     def test_search__title_nonascii(self):
@@ -85,13 +81,13 @@ class TestCaseWatchPageSearch(WebdriverTestCase):
                                "('q')[1].value='不过这四个问题'")
         results_pg = self.watch_pg.advanced_search()
         self.assertTrue(results_pg.search_has_results())
-        
+       
 
     def test_search__sub_content(self):
         """Search contents in subtitle text.
 
         """
-        test_text = 'This line should be bold'
+        test_text = '[Zeus]'
         results_pg = self.watch_pg.basic_search(test_text)
         self.assertTrue(results_pg.search_has_results())
 

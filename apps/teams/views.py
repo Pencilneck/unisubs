@@ -19,11 +19,11 @@ import logging
 import random
 
 import babelsubs
-from django.db import transaction
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth.decorators import login_required, permission_required
+from django.contrib.auth.views import redirect_to_login
 from django.contrib.sites.models import Site
 from django.core.urlresolvers import reverse
 from django.db.models import Q, Count
@@ -38,7 +38,6 @@ from django.utils.translation import ugettext_lazy as _
 from django.utils.encoding import iri_to_uri, force_unicode
 from django.views.generic.list_detail import object_list
 
-import teams.moderation_const as MODERATION
 import widget
 from apps.auth.models import UserLanguage, CustomUser as User
 from apps.videos.templatetags.paginator import paginate
@@ -49,7 +48,7 @@ from teams.forms import (
     AddTeamVideosFromFeedForm, TaskAssignForm, SettingsForm, TaskCreateForm,
     PermissionsForm, WorkflowForm, InviteForm, TaskDeleteForm,
     GuidelinesMessagesForm, RenameableSettingsForm, ProjectForm, LanguagesForm,
-    UnpublishForm, MoveTeamVideoForm, TaskUploadForm, ChooseTeamForm
+    DeleteLanguageForm, MoveTeamVideoForm, TaskUploadForm, BillingReportForm
 )
 from teams.models import (
     Team, TeamMember, Invite, Application, TeamVideo, Task, Project, Workflow,
@@ -61,10 +60,10 @@ from teams.permissions import (
     can_create_task_translate, can_view_tasks_tab, can_invite,
     roles_user_can_assign, can_join_team, can_edit_video, can_delete_tasks,
     can_perform_task, can_rename_team, can_change_team_settings,
-    can_perform_task_for, can_delete_team, can_review, can_approve,
-    can_delete_video, can_remove_video
+    can_perform_task_for, can_delete_team, can_delete_video, can_remove_video,
+    can_delete_language,
 )
-from teams.signals import api_teamvideo_new, api_subtitles_rejected
+from teams.signals import api_teamvideo_new
 from teams.tasks import (
     invalidate_video_caches, invalidate_video_moderation_caches,
     update_video_moderation, update_one_team_video, update_video_public_field,
@@ -86,11 +85,10 @@ from videos.tasks import (
     upload_subtitles_to_original_service, delete_captions_in_original_service,
     delete_captions_in_original_service_by_code
 )
-from videos.models import Action, VideoUrl, SubtitleLanguage, Video
-from apps.subtitles import models as sub_models
+from videos.models import Action, VideoUrl, Video
+from subtitles.models import SubtitleLanguage, SubtitleVersion
 from widget.rpc import add_general_settings
 from widget.views import base_widget_params
-from raven.contrib.django.models import client
 
 
 logger = logging.getLogger("teams.views")
@@ -108,6 +106,8 @@ APLICATIONS_ON_PAGE = getattr(settings, 'APLICATIONS_ON_PAGE', 15)
 ACTIONS_ON_PAGE = getattr(settings, 'ACTIONS_ON_PAGE', 20)
 DEV = getattr(settings, 'DEV', False)
 DEV_OR_STAGING = DEV or getattr(settings, 'STAGING', False)
+
+BILLING_CUTOFF = getattr(settings, 'BILLING_CUTOFF', None)
 
 
 # Management
@@ -731,6 +731,7 @@ def activity(request, slug):
 def detail_members(request, slug, role=None):
     q = request.REQUEST.get('q')
     lang = request.GET.get('lang')
+    sort = request.GET.get('sort', 'joined')
     filtered = False
 
     team = Team.get(slug, request.user)
@@ -762,6 +763,11 @@ def detail_members(request, slug, role=None):
             qs = qs.filter(role__in=[TeamMember.ROLE_OWNER, TeamMember.ROLE_ADMIN])
         else:
             qs = qs.filter(role=role)
+
+    if sort == 'joined':
+        qs = qs.order_by('created')
+    elif sort == '-joined':
+        qs = qs.order_by('-created')
 
     extra_context = widget.add_onsite_js_files({})
     extra_context['filtered'] = filtered
@@ -1170,7 +1176,6 @@ def _get_task_filters(request):
              'q': request.GET.get('q'), }
 
 def _cache_video_url(tasks):
-    team_video_pks = [t.team_video_id for t in tasks]
     video_pks = [t.team_video.video_id for t in tasks]
 
     video_urls = dict([(vu.video_id, vu.effective_url) for vu in
@@ -1205,7 +1210,7 @@ def dashboard(request, slug):
     widget_settings = {}
     from apps.widget.rpc import add_general_settings
     add_general_settings(request, widget_settings)
-    
+
     videos = []
 
     if member and team.workflow_enabled:
@@ -1244,7 +1249,7 @@ def dashboard(request, slug):
 
             if len(videos) >= VIDEOS_ON_PAGE:
                 break
-        
+
         for video in videos:
             _cache_video_url(video.tasks)
     else:
@@ -1281,7 +1286,7 @@ def dashboard(request, slug):
         'can_add_video': can_add_video(team, request.user),
         'widget_settings': widget_settings
     }
-    
+
     return context
 
 @timefn
@@ -1420,20 +1425,9 @@ def create_task(request, slug, team_video_pk):
             task.set_expiration()
 
             if task.type == Task.TYPE_IDS['Subtitle']:
-                languages_with_versions = list(
-                    task.team_video.video.newsubtitlelanguage_set
-                                         .having_versions())
-
-                if not languages_with_versions:
-                    task.language = ''
-                else:
-                    # There should never be more than one language with
-                    # subtitles for a video eligible for a transcribe task.  If
-                    # for some reason there is, we'll just take the first one
-                    # the DB decides to give us.
-                    sl = languages_with_versions[0]
-                    task.language = sl.language_code
-                    task.new_subtitle_version = sl.get_tip()
+                # For subtitle tasks, let the person who performse the task
+                # choose the language.
+                task.language = ''
 
             if task.type in [Task.TYPE_IDS['Review'], Task.TYPE_IDS['Approve']]:
                 task.approved = Task.APPROVED_IDS['In Progress']
@@ -1482,16 +1476,17 @@ def _delete_subtitle_version(version):
     n = version.version_number
 
     # "Delete" this specific version...
-    version.visibility_override = 'private'
+    version.visibility_override = 'deleted'
     version.save()
 
     # We also want to "delete" all draft subs leading up to this version.
-    previous_versions = (sl.subtitleversion_set.filter(version_number__lt=n)
+    previous_versions = (sl.subtitleversion_set.extant()
+                                               .filter(version_number__lt=n)
                                                .order_by('-version_number'))
     for v in previous_versions:
         if v.is_public():
             break
-        v.visibility_override = 'private'
+        v.visibility_override = 'deleted'
         v.save()
 
 
@@ -1512,14 +1507,15 @@ def delete_task(request, slug):
         video = task.team_video.video
         task.deleted = True
 
-        if task.subtitle_version:
+        if task.new_subtitle_version:
             if form.cleaned_data['discard_subs']:
-                _delete_subtitle_version(task.subtitle_version)
+                _delete_subtitle_version(task.new_subtitle_version)
                 task.subtitle_version = None
+                task.new_subtitle_version = None
 
             if task.get_type_display() in ['Review', 'Approve']:
                 # TODO: Handle subtitle/translate tasks here too?
-                if not form.cleaned_data['discard_subs'] and task.subtitle_version:
+                if not form.cleaned_data['discard_subs'] and task.new_subtitle_version:
                     task.new_subtitle_version.visibility_override = 'public'
                     task.new_subtitle_version.save()
                     metadata_manager.update_metadata(video.pk)
@@ -1593,7 +1589,9 @@ def upload_draft(request, slug, video_id):
     if request.POST:
         video = Video.objects.get(video_id=video_id)
         form = TaskUploadForm(request.POST, request.FILES,
-                              user=request.user, video=video)
+                              user=request.user, video=video,
+                              initial={'primary_audio_language_code':video.primary_audio_language_code}
+        )
 
         if form.is_valid():
             form.save()
@@ -1770,42 +1768,6 @@ def sync_third_party_account(request, slug, account_id):
 
 
 # Unpublishing
-def _create_task_after_unpublishing(subtitle_version):
-    team_video = subtitle_version.video.get_team_video()
-    lang = subtitle_version.language_code
-
-    # If there's already an open task for this language we don't need another.
-    open_task_exists = team_video.task_set.incomplete().filter(language=lang).exists()
-
-    if open_task_exists:
-        return None
-
-    workflow = Workflow.get_for_team_video(team_video)
-    if workflow.approve_allowed:
-        type = Task.TYPE_IDS['Approve']
-        can_do = can_approve
-    else:
-        type = Task.TYPE_IDS['Review']
-        can_do = can_review
-
-    # Try to guess the appropriate assignee by looking at the last task.
-    last_task = (team_video.task_set.complete().filter(language=lang, type=type)
-                                               .order_by('-completed')
-                                               [:1])
-    assignee = None
-    if last_task:
-        candidate = last_task[0].assignee
-        if candidate and can_do(team_video, candidate, lang):
-            assignee = candidate
-
-    task = Task(team=team_video.team, team_video=team_video,
-                assignee=assignee, language=lang, type=type,
-                new_subtitle_version=subtitle_version)
-    task.set_expiration()
-    task.save()
-
-    return task
-
 def _propagate_unpublish_to_external_services(language_pk, language_code, video):
     """Push the 'unpublishing' of subs to third-party providers for the given language.
 
@@ -1820,7 +1782,7 @@ def _propagate_unpublish_to_external_services(language_pk, language_code, video)
 
     # Find the latest public version to determine what kind of third-party call
     # we need to make.
-    latest_version = language.latest_version(public_only=True)
+    latest_version = language.get_tip(public=True)
 
     if latest_version:
         # There's a latest version that's still public, so third-party services
@@ -1831,77 +1793,344 @@ def _propagate_unpublish_to_external_services(language_pk, language_code, video)
         # language still exists.
         #
         # This means that all of the subs in the language have been unpublished
-        # and are awaiting moderation.
+        # and are awaiting moderation, or have been deleted.
         #
-        # In this case we should delete the subs from the external service
-        # entirely, since we know that all the subs we have are bad.
+        # In either case we should delete the subs from the external service
+        # entirely, since we know that all the subs we had are bad.
         delete_captions_in_original_service.delay(language_pk)
 
-def _propagate_unpublish_to_tasks(team_video, language_pk, language_code):
-    """Push the 'unpublishing' of a language to any tasks applying to it.
 
-    The unpublishing must be fully complete before this function is called.
+def _add_task_note(task, note):
+    """Add a note to the body of the Task in a nice way.
+
+    Does not save() the Task.
 
     """
-    try:
-        language = SubtitleLanguage.objects.get(pk=language_pk)
-        if language and language.latest_version(public_only=False):
-            # Don't kill any tasks if there are still versions remaining.
-            return
-    except SubtitleLanguage.DoesNotExist:
-        pass
+    task.body = (task.body + u'\n\n' + note).strip()
 
-    tasks_to_delete = team_video.task_set.not_deleted()
+def _current_task(team_video, language_code):
+    """Return the currently incomplete Task for the given video/language, or None.
 
-    # If there is still no original language left, we can just delete all the
-    # tasks for this video because someone deleted everything.
-    #
-    # If there *is* an original language left, we just delete tasks for the
-    # languages that were unpublished.
-    if team_video.video.subtitle_language():
-        tasks_to_delete = tasks_to_delete.filter(language=language_code)
+    If there are multiple incomplete tasks, something is very wrong.  This
+    function will delete them all and return None in that case.
 
-    tasks_to_delete.update(deleted=True)
+    """
+    tasks = list(team_video.task_set.incomplete().filter(language=language_code))
 
-def unpublish(request, slug):
-    team = get_object_or_404(Team, slug=slug)
+    if len(tasks) > 1:
+        # There should only ever be one open task for a given language.  But
+        # we'll be liberal here and deal with multiples.  And by "deal with"
+        # I mean "ruthlessly delete".
+        for task in tasks:
+            task.deleted = True
+            _add_task_note(task, u'Deleted due to duplicate tasks.')
+            task.save()
 
-    form = UnpublishForm(request.user, team, request.POST)
-    if not form.is_valid():
-        messages.error(request, _(u'Invalid unpublishing request.\nErrors:\n') + '\n'.join(flatten_errorlists(form.errors)))
-        return HttpResponseRedirect(request.POST.get('next', team.get_absolute_url()))
-
-    version = form.cleaned_data['subtitle_version']
-    team_video = version.video.get_team_video()
-    video = version.video
-    scope = form.cleaned_data['scope']
-    language = version.subtitle_language
-
-    results = []
-    if scope == 'version':
-        results.append([version.subtitle_language.pk, version.language_code,
-                        version.unpublish()])
-    elif scope == 'dependents':
-        translations = list(language.get_dependent_subtitle_languages())
-
-        for l in [language] + translations:
-            results.append([l.pk, l.language_code, l.unpublish()])
+        return None
     else:
-        assert False, 'Invalid scope.'
+        return tasks[0] if tasks else None
 
-    for language_pk, language_code, version_for_task in results:
-        _propagate_unpublish_to_external_services(language_pk, language_code, video)
-        _propagate_unpublish_to_tasks(team_video, language_pk, language_code)
+def _ensure_trans_task(team_video, subtitle_language):
+    """Ensure that a trans[late/scribe] task exists for this (empty) language.
 
-        if version_for_task:
-            _create_task_after_unpublishing(version_for_task)
+    This function should only be called after unpublishing, and when the
+    subtitle language has no extant versions.
 
-    metadata_manager.update_metadata(team_video.video.pk)
-    update_one_team_video(team_video.pk)
+    Any existing review/approve tasks will be deleted.  If a trans[late/scribe]
+    task exists, it will be updated.  Otherwise one will be created if and only
+    if the language is on the teams "auto-create" list.
 
-    messages.success(request, _(u'Successfully unpublished subtitles.'))
-    api_subtitles_rejected.send(version)
-    return HttpResponseRedirect(request.POST.get('next', team.get_absolute_url()))
+    """
+    lc = subtitle_language.language_code
+    task = _current_task(team_video, lc)
+
+    if task:
+        # Okay, at this point we know that we have a single current task.
+        if task.type in (Task.TYPE_IDS['Subtitle'], Task.TYPE_IDS['Translate']):
+            # If it's a trans[late/scribe] task, we can just update its version
+            # and we're done.
+            task.new_subtitle_version = None
+            _add_task_note(task, u'Subtitle version unset when unpublishing.')
+            task.save()
+            return
+        else:
+            # Otherwise it's a review/approve task that needs to be deleted.
+            task.deleted = True
+            _add_task_note(task, u'Deleted when unpublishing.')
+            task.save()
+
+    # If we've reached this point, we know there are no existing tasks for this
+    # language.  We may need to create one.
+    workflow = Workflow.get_for_team_video(team_video)
+    video = team_video.video
+    preferred_langs = (
+        TeamLanguagePreference.objects.get_preferred(team_video.team))
+
+    other_languages_with_public_versions = (
+        video.newsubtitlelanguage_set.having_public_versions()
+                                     .exclude(pk=subtitle_language.pk))
+    other_languages_with_versions = (
+        video.newsubtitlelanguage_set.having_versions()
+                                     .exclude(pk=subtitle_language.pk))
+
+    if other_languages_with_public_versions.exists():
+        # If there are other languages that already have public versions, we may
+        # want to create a translate task.
+        if workflow.autocreate_translate and lc in preferred_langs:
+            # If this is one of the preferred languages for an autocreating
+            # team, create it and get out.
+            Task(team=team_video.team, team_video=team_video, assignee=None,
+                 language=lc, type=Task.TYPE_IDS['Translate'],
+                 new_subtitle_version=None).save()
+            return
+        else:
+            # Otherwise the team doesn't want the task autocreated for some
+            # reason, so we're done!
+            return
+    elif other_languages_with_versions.exists():
+        # If there are other languages with versions, but they're not PUBLIC
+        # yet, then this language will eventually get a translation task created
+        # for it whenever the subtitling of those is finished.  We don't need to
+        # do anything yet.
+        return
+    else:
+        # Otherwise there are NO other languages with versions.  This one
+        # doesn't have any versions either.  So we may need to create a subtitle
+        # task for this video.
+        if team_video.task_set.not_deleted().exists():
+            # If there's already any task for any other language, we know we
+            # don't need a subtitle task, so just bail now.
+            #
+            # TODO: Is this actually right?  We may actually need to create the
+            # subtitle task here after all.  It depends.
+            return
+        elif workflow.autocreate_subtitle:
+            # If the team autocreates subtitle tasks, then we might create one
+            # here, depending on languages.
+            palc = team_video.video.primary_audio_language_code
+            if (not palc) or palc == lc:
+                # If this language matches the video's primary audio language,
+                # or if we don't know the PAL, we'll create the subtitle task.
+                Task(team=team_video.team, team_video=team_video,
+                    subtitle_version=None, language=(palc or ''),
+                    type=Task.TYPE_IDS['Subtitle']).save()
+                return
+            else:
+                # Otherwise the video has a PAL and this SubtitleLanguage isn't
+                # for it, so we can just wait.
+                return
+        else:
+            # If the team doesn't autocreate subtitle tasks at all we're done.
+            return
+
+def _ensure_task_exists(team_video, subtitle_language):
+    """Ensure that the proper task exists for this (non-empty) language.
+
+    This function should only be called after unpublishing, and when the
+    subtitle language has some private versions, but no public ones.
+
+    Any existing tasks will be updated.  Otherwise a review/approve task will be
+    created.
+
+    """
+    lc = subtitle_language.language_code
+    tip = subtitle_language.get_tip(public=False)
+
+    task = _current_task(team_video, lc)
+
+    if task:
+        # Okay, at this point we know that we have a single current task.
+        #
+        # All we need to do now is point that task at the new extant tip and
+        # we're done.
+        #
+        # TODO: We probably also need to handle new_review_base_version here
+        # too at some point.
+        task.new_subtitle_version = tip
+        _add_task_note(task, u'Subtitle version reset when unpublishing.')
+        task.save()
+    else:
+        # There are no tasks, so we need to create a review/approve task.
+        workflow = Workflow.get_for_team_video(team_video)
+
+        if workflow.review_enabled or workflow.approve_enabled:
+            # We'll prefer approve to review if it's available.
+            type = Task.TYPE_IDS['Approve'
+                                 if workflow.approve_enabled
+                                 else 'Review']
+
+            Task(team=team_video.team, team_video=team_video, assignee=None,
+                 language=lc, type=type, new_subtitle_version=tip,
+                 new_review_base_version=tip).save()
+
+            # TODO: Fix assignee with something like this:
+            # last_task = (team_video.task_set.complete().filter(language=lang, type=type)
+            #                                         .order_by('-completed')
+            #                                         [:1])
+            # if workflow.approve_allowed:
+            #     can_do = can_approve
+            # else:
+            #     can_do = can_review
+            #
+            # assignee = None
+            # if last_task:
+            #     candidate = last_task[0].assignee
+            #     if candidate and can_do(team_video, candidate, lang):
+            #         assignee = candidate
+            # task.set_expiration()
+            return
+        else:
+            # If this workflow doesn't allow review/approve tasks, we'll bail.
+            #
+            # TODO: Should we create trans[late/scribe] tasks in this case
+            # instead?
+            return
+
+def _clean_empty_translation_tasks(team_video):
+    """Delete translation tasks that haven't been started if the source is gone.
+
+    If we've unpublished (or deleted) a language, there may not be any languages
+    to translate from any more.  Existing translation tasks that have already
+    been started will be locked until the subs are reapproved, but empty
+    translation tasks can just be deleted.  They'll get re-autocreated when the
+    source is reapproved.
+
+    """
+    video = team_video.video
+    sources = video.newsubtitlelanguage_set.having_public_versions()
+
+    if sources.exists():
+        # If there are still valid sources for translations, we don't need to
+        # touch empty translation tasks.
+        return
+    else:
+        # There are no sources to translate from yet.  So empty translation
+        # tasks can be deleted.
+        tasks = Task.objects.incomplete_translate().filter(team_video=team_video)
+        for task in tasks:
+            empty = not (
+                SubtitleVersion.objects.extant()
+                                       .filter(video=video,
+                                               language_code=task.language)
+                                       .exists())
+
+            if empty:
+                task.deleted = True
+                _add_task_note(task, u'Deleted empty translation '
+                                     u'task when unpublishing.')
+                task.save()
+
+
+def _get_languages_to_unpublish(subtitle_language):
+    """Get a list of SubtitleLanguage objects that should be unpublished.
+
+    Basically, this will return a list containing:
+
+    * The given SubtitleLanguage.
+    * Any translations based on it.
+    * Any translations based on *those* translations.
+    * Etc.
+
+    This function does its best to handle bad data as well (like circular
+    translation relationships).
+
+    """
+    languages = [subtitle_language]
+    languages_to_delete = []
+    seen = set()
+
+    while languages:
+        next_sl = languages.pop(0)
+
+        if next_sl.language_code in seen:
+            continue
+
+        languages_to_delete.append(next_sl)
+        languages.extend(next_sl.get_dependent_subtitle_languages())
+        seen.add(next_sl.language_code)
+
+    return languages_to_delete
+
+def _writelock_languages_for_delete(request, subtitle_language):
+    """Try to writelock the language and all dependents for deletion.
+
+    Returns (could_lock, locked).  could_lock is a boolean, True if all the
+    required languages were able to be writelocked, False otherwise.  locked is
+    a list of all the languages that were locked in the process.
+
+    Users of this function will need to release the writelock on each item in
+    the locked list themselves.
+
+    """
+    to_lock = [subtitle_language]
+    to_lock.extend(subtitle_language.get_dependent_subtitle_languages())
+
+    locked = []
+
+    for sl in to_lock:
+        if sl.can_writelock(request.browser_id):
+            sl.writelock(request.user, request.browser_id)
+            locked.append(sl)
+        else:
+            messages.error(request,
+                _(u'Someone else is currently editing %s. '
+                  u'Please try again later.')
+                % sl.get_language_code_display())
+            return False, locked
+
+    return True, locked
+
+def delete_language(request, slug, lang_id):
+    team = get_object_or_404(Team, slug=slug)
+    if not can_delete_language(team, request.user):
+        return redirect_to_login(reverse("teams:delete-language",
+                                         kwargs={"slug": team.slug,
+                                                 "lang_id": lang_id}))
+    language = get_object_or_404(SubtitleLanguage, pk=lang_id)
+    next_url = request.POST.get('next', language.video.get_absolute_url())
+    team_video = language.video.get_team_video()
+    if team_video.team.pk != team.pk:
+        raise Http404()
+
+    if request.method == 'POST':
+        form = DeleteLanguageForm(request.user, team, language, request.POST)
+
+        if form.is_valid():
+            could_lock, locked = _writelock_languages_for_delete(request,
+                                                                 language)
+            try:
+                if could_lock:
+                    for sublang in form.languages_to_fork():
+                        sublang.is_forked = True
+                        sublang.save()
+
+                    language.nuke_language()
+
+                    _propagate_unpublish_to_external_services(
+                        language.pk, language.language_code, language.video)
+
+                    metadata_manager.update_metadata(language.video.pk)
+                    update_one_team_video(team_video.pk)
+
+                    messages.success(request,
+                                     _(u'Successfully deleted language.'))
+                    return HttpResponseRedirect(next_url)
+            finally:
+                for sl in locked:
+                    # We need to get a fresh copy of the SL here so that the
+                    # save() in release_writelock doesn't overwrite any other
+                    # changes we've made in the try block.  ORMs are fun.
+                    SubtitleLanguage.objects.get(pk=sl.pk).release_writelock()
+        else:
+            for e in flatten_errorlists(form.errors):
+                messages.error(request, e)
+    else:
+        form = DeleteLanguageForm(request.user, team, language)
+
+    return render_to_response('teams/delete-language.html', {
+        'form': form,
+        'language': language,
+    }, RequestContext(request))
 
 @login_required
 def auto_captions_status(request, slug):
@@ -1936,23 +2165,26 @@ def billing(request):
         raise Http404
 
     if request.method == 'POST':
-        form = ChooseTeamForm(request.POST)
+        form = BillingReportForm(request.POST)
         if form.is_valid():
             team = form.cleaned_data.get('team')
             start_date = form.cleaned_data.get('start_date')
             end_date = form.cleaned_data.get('end_date')
+            report_type = form.cleaned_data.get('type')
 
             report = BillingReport.objects.create(team=team,
-                    start_date=start_date, end_date=end_date)
+                    start_date=start_date, end_date=end_date, type=report_type)
 
             process_billing_report.delay(report.pk)
 
     else:
-        form = ChooseTeamForm()
+        form = BillingReportForm()
 
     reports = BillingReport.objects.all().order_by('-pk')
 
-    return render_to_response('teams/billing/choose.html', {
+    return render_to_response('teams/billing/reports.html', {
         'form': form,
-        'reports': reports
+        'reports': reports,
+        'cutoff': BILLING_CUTOFF
     }, RequestContext(request))
+

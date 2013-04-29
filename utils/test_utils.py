@@ -4,7 +4,7 @@ import urlparse
 
 import mock
 from nose.plugins import Plugin
-from django_nose.runner import NoseTestSuiteRunner
+
 
 REQUEST_CALLBACKS = []
 
@@ -154,8 +154,13 @@ def mock_youtube_get_entry(video_id):
     except KeyError:
         # We should have data stored for video_id, but we don't.  Run a quick
         # query so that it's easy to add.
-        from videos.types import youtube
-        entry = youtube.yt_service.GetYouTubeVideoEntry(video_id=str(video_id))
+        from videos.types import youtube, VideoTypeError
+        from gdata.service import RequestError
+        try:
+            entry = youtube.yt_service.GetYouTubeVideoEntry(video_id=str(video_id))
+        except RequestError as e:
+            err = e[0].get('body', 'Undefined error')
+            raise VideoTypeError('Youtube error: %s' % err)
         raise ValueError("Don't know how to handle youtube video: %s\n"
                          "query result: (%r, %r, %r)" %
                          (video_id, entry.media.title.text,
@@ -168,6 +173,7 @@ def mock_youtube_get_entry(video_id):
     entry = mock.Mock()
     mock_author = mock.Mock()
     mock_author.name.text = author
+    mock_author.uri.text = author
     entry.author = [mock_author]
     entry.media.title.text = title
     entry.media.description.text = description

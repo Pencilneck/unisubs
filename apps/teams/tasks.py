@@ -1,4 +1,7 @@
 from datetime import datetime
+import logging
+
+logger = logging.getLogger('teams.tasks')
 
 from celery.decorators import periodic_task
 from celery.schedules import crontab, timedelta
@@ -75,7 +78,16 @@ def expire_tasks():
     )
     for task in expired_tasks:
         task.assignee = task.expiration_date = None
-        task.save()
+        # run each inside a try/except so that one
+        # rotten apple doesn't make a huge mess
+        try:
+            task.save()
+        except Exception as e:
+            logger.error('Error on expiring tasks', extra={
+            'task': task,
+            'exception': e,
+        })
+
 
 
 @periodic_task(run_every=crontab(minute=0, hour=23))

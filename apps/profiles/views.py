@@ -304,16 +304,14 @@ def remove_third_party(request, account_id):
 
         if account not in request.user.third_party_accounts.all():
             raise Http404
-
-    if account_type == 'twitter':
+    elif account_type == 'twitter':
         account = get_object_or_404(TwitterAccount, pk=account_id)
         display_type = 'Twitter'
         uid = account.username
 
         if account not in request.user.twitteraccount_set.all():
             raise Http404
-
-    if account_type == 'facebook':
+    elif account_type == 'facebook':
         account = get_object_or_404(FacebookAccount, pk=account_id)
         display_type = 'Facebook'
         uid = account.uid
@@ -333,9 +331,18 @@ def remove_third_party(request, account_id):
                 logger.error("Feed for youtube account doesn't exist", extra={
                     "youtube_username": username
                 })
-
-        account.delete()
-        messages.success(request, _('Account deleted.'))
+            # for youtube accounts we might take a while to remove any descriptions
+            #  we've added to videos, so we run that in the background.
+            # the task will access the tpa, and will delete the account once it's
+            # done
+            from accountlinker.tasks import remove_youtube_descriptions_for_tpa
+            remove_youtube_descriptions_for_tpa.delay(account.pk)
+            msg = _("We're tying up loose ends - your account will be removed shortly. Check back after 10 minutes")
+        else:
+            # anything but yt accounts can be deleted right away
+            account.delete()
+            msg = _('Account deleted.')
+        messages.success(request, msg)
         return redirect('profiles:account')
 
     context = {

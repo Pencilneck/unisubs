@@ -150,7 +150,7 @@ class TestBasicAdding(TestCase):
         sl = SubtitleLanguage.objects.get(video=self.video, language_code='en')
 
         # Make sure the version seems sane.
-        v = sl.get_tip()
+        v = sl.get_tip(full=True)
         self.assertEqual(v.version_number, 1)
         self.assertEqual(v.language_code, 'en')
 
@@ -164,7 +164,7 @@ class TestBasicAdding(TestCase):
             SubtitleVersion.objects.filter(video=self.video).count(), 2)
 
         # Make sure it looks sane too.
-        v = sl.get_tip()
+        v = sl.get_tip(full=True)
         self.assertEqual(v.version_number, 2)
         self.assertEqual(v.language_code, 'en')
 
@@ -172,7 +172,7 @@ class TestBasicAdding(TestCase):
         def _get_tip_subs():
             sl = SubtitleLanguage.objects.get(video=self.video,
                                               language_code='en')
-            return list(sl.get_tip().get_subtitles().subtitle_items())
+            return list(sl.get_tip(full=True).get_subtitles().subtitle_items())
 
         def _add(subs):
             pipeline.add_subtitles(self.video, 'en', subs)
@@ -226,13 +226,13 @@ class TestBasicAdding(TestCase):
 
         # Make sure all the versions are there.
         sl = SubtitleLanguage.objects.get(video=self.video, language_code='en')
-        self.assertEqual(sl.subtitleversion_set.count(), 5)
+        self.assertEqual(sl.subtitleversion_set.full().count(), 5)
 
     def test_title_description(self):
         def _get_tip_td():
             sl = SubtitleLanguage.objects.get(video=self.video,
                                               language_code='en')
-            tip = sl.get_tip()
+            tip = sl.get_tip(full=True)
             return (tip.title, tip.description)
 
         def _add(*args, **kwargs):
@@ -275,7 +275,7 @@ class TestBasicAdding(TestCase):
         def _get_tip_author():
             sl = SubtitleLanguage.objects.get(video=self.video,
                                               language_code='en')
-            return sl.get_tip().author
+            return sl.get_tip(full=True).author
 
         def _add(*args, **kwargs):
             pipeline.add_subtitles(self.video, 'en', None, *args, **kwargs)
@@ -310,7 +310,7 @@ class TestBasicAdding(TestCase):
         def _get_tip_vis():
             sl = SubtitleLanguage.objects.get(video=self.video,
                                               language_code='en')
-            tip = sl.get_tip()
+            tip = sl.get_tip(full=True)
             return (tip.visibility, tip.visibility_override)
 
         def _add(*args, **kwargs):
@@ -356,9 +356,9 @@ class TestBasicAdding(TestCase):
         def _get_tip_parents(language_code):
             sl = SubtitleLanguage.objects.get(video=self.video,
                                               language_code=language_code)
-            tip = sl.get_tip()
+            tip = sl.get_tip(full=True)
             return sorted(["%s%d" % (v.language_code, v.version_number)
-                           for v in tip.parents.all()])
+                           for v in tip.parents.full()])
 
         def _assert_notfound(l):
             self.assertRaises(SubtitleVersion.DoesNotExist, l)
@@ -642,7 +642,7 @@ class TestRollbacks(TestCase):
         rb = pipeline.rollback_to(v, 'en', 1)
 
         self.assertTrue(rb.is_rollback())
-        self.assertEqual(rb.get_rollback_source(), en1)
+        self.assertEqual(rb.get_rollback_source(full=True), en1)
 
         self.assertEqual(rb.video.id, source.video.id)
         self.assertEqual(rb.subtitle_language.id, source.subtitle_language.id)
@@ -650,7 +650,7 @@ class TestRollbacks(TestCase):
         self.assertEqual(rb.get_subtitles(), source.get_subtitles())
         self.assertEqual(rb.title, source.title)
         self.assertEqual(rb.description, source.description)
-        self.assertEqual(_ids(rb.parents.all()), _ids([en3]))
+        self.assertEqual(_ids(rb.parents.full()), _ids([en3]))
 
     def test_rollback_authors(self):
         v = self.video
@@ -683,14 +683,14 @@ class TestRollbacks(TestCase):
             return set(i.id for i in s)
 
 
-        self.assertEqual(_ids(is2.parents.all()), _ids([is1, de1]))
+        self.assertEqual(_ids(is2.parents.full()), _ids([is1, de1]))
 
         # Rollbacks do not inherit the parents of their sources.
         is4 = pipeline.rollback_to(v, 'is', 1)
-        self.assertEqual(_ids(is4.parents.all()), _ids([is3]))
+        self.assertEqual(_ids(is4.parents.full()), _ids([is3]))
 
         is5 = pipeline.rollback_to(v, 'is', 2)
-        self.assertEqual(_ids(is5.parents.all()), _ids([is4]))
+        self.assertEqual(_ids(is5.parents.full()), _ids([is4]))
 
     def test_rollback_visibility(self):
         v = self.video

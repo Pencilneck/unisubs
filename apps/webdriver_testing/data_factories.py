@@ -14,6 +14,7 @@ from apps.teams.models import Application
 from apps.teams.models import Project
 from apps.teams.models import TeamLanguagePreference
 from apps.teams.models import Workflow 
+from apps.teams.models import BillingReport
 from apps.auth.models import CustomUser as User
 from apps.auth.models import UserLanguage
 from apps.messages.models import Message
@@ -80,23 +81,17 @@ class TeamAdminMemberFactory(factory.Factory):
     user = factory.SubFactory(UserFactory, username=
         factory.Sequence(lambda n: 'AdminUser' + n))
 
-class TeamManagerMemberFactory(factory.Factory):
-    FACTORY_FOR = TeamMember
-    role = TeamMember.ROLE_MANAGER
-    user = factory.SubFactory(UserFactory, username=
-        factory.Sequence(lambda n: 'ManagerUser' + n))
-
 class TeamOwnerMemberFactory(factory.Factory):
     FACTORY_FOR = TeamMember
     role = TeamMember.ROLE_OWNER
     user = factory.SubFactory(UserFactory, username=
-        factory.Sequence(lambda n: 'ManagerUser' + n))
-
+        factory.Sequence(lambda n: 'OwnerUser' + n))
 
 class TeamManagerMemberFactory(factory.Factory):
     FACTORY_FOR = TeamMember
     role = TeamMember.ROLE_MANAGER
-    user = factory.Sequence(lambda n: 'ManagerUser' + n)
+    user = factory.SubFactory(UserFactory, username=
+        factory.Sequence(lambda n: 'TeamManager' + n))
 
 
 class TeamVideoFactory(factory.Factory):
@@ -133,5 +128,7 @@ class TaskFactory(factory.Factory):
     FACTORY_FOR = Task 
     team_video = factory.SubFactory(TeamVideoFactory)
 
-
+class BillingFactory(factory.Factory):
+    FACTORY_FOR = BillingReport 
+    type = 2
 

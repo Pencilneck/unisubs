@@ -1,0 +1,21 @@
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:tts="http://www.w3.org/ns/ttml#styling" xml:lang="">
+            <head>
+                <metadata xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+                    <ttm:title/>
+                    <ttm:description/>
+                    <ttm:copyright/>
+                </metadata>
+
+                <styling xmlns:tts="http://www.w3.org/ns/ttml#styling">
+                    <style xml:id="amara-style" tts:color="white" tts:fontFamily="proportionalSansSerif" tts:fontSize="18px" tts:textAlign="center"/>
+                </styling>
+
+                <layout xmlns:tts="http://www.w3.org/ns/ttml#styling">
+                    <region xml:id="amara-subtitle-area" style="amara-style" tts:extent="560px 62px" tts:padding="5px 3px" tts:backgroundColor="black" tts:displayAlign="after"/>
+                </layout>
+            </head>
+            <body region="amara-subtitle-area">
+                <div>
+                <p begin="00:00:00.000" end="00:00:01.000">This line has <span tts:fontWeight="bold">bold text in it</span></p><p begin="00:00:02.000" end="00:00:04.500">This line has <span tts:fontStyle="italic">multiline<br/>italics</span></p><p begin="00:00:04.500" end="00:00:04.500">This one has an evil tag</p></div>
+            </body>
+        </tt>

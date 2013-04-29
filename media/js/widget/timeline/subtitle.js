@@ -61,7 +61,7 @@ unisubs.timeline.Subtitle.prototype.updateTimes_ = function() {
                                   previousCaption.getEndTime();
         this.startTime_ =
             Math.max(prevSubtitleEndTime,
-                     this.videoPlayer_.getPlayheadTime() * 1000)  +
+                     parseInt(this.videoPlayer_.getPlayheadTime() * 1000))  +
             unisubs.timeline.Subtitle.UNASSIGNED_SPACING;
     }
     else {
@@ -80,7 +80,7 @@ unisubs.timeline.Subtitle.prototype.updateTimes_ = function() {
             this.endTime_ = Math.max(
                 this.startTime_ +
                     unisubs.timeline.Subtitle.MIN_UNASSIGNED_LENGTH,
-                this.videoPlayer_.getPlayheadTime() + 1000);
+                parseInt(this.videoPlayer_.getPlayheadTime() + 1000));
             if (this.nextSubtitle_)
                 this.nextSubtitle_.bumpUnsyncedTimes(this.endTime_);
         }
@@ -116,7 +116,7 @@ unisubs.timeline.Subtitle.prototype.videoTimeUpdate_ = function(e) {
         var prevEndTime = this.endTime_;
         this.endTime_ = Math.max(
             this.startTime_ + unisubs.timeline.Subtitle.MIN_UNASSIGNED_LENGTH,
-            this.videoPlayer_.getPlayheadTime() * 1000);
+            parseInt(this.videoPlayer_.getPlayheadTime() * 1000));
         if (prevEndTime != this.getEndTime()) {
             this.dispatchEvent(unisubs.timeline.Subtitle.CHANGE);
             if (this.nextSubtitle_)
@@ -125,7 +125,7 @@ unisubs.timeline.Subtitle.prototype.videoTimeUpdate_ = function(e) {
     }
     else {
         if (this.editableCaption_.getPreviousCaption() == null)
-            this.bumpUnsyncedTimes(this.videoPlayer_.getPlayheadTime() * 1000);
+            this.bumpUnsyncedTimes(parseInt(this.videoPlayer_.getPlayheadTime() * 1000));
         else{
             var previousEndTime = this.editableCaption_.getPreviousCaption().getEndTime();
             var bumpTo = Math.max( this.videoPlayer_.getPlayheadTime() * 1000, previousEndTime || 0);

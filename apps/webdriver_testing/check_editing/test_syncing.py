@@ -40,7 +40,6 @@ class TestCasePartialSync(WebdriverTestCase):
         cls.create_modal.create_original_subs('English', 'English')
         cls.typed_subs = cls.sub_editor.type_subs()
         cls.sub_editor.save_and_exit()
-        cls.video_pg.open_video_page(cls.test_video.video_id)
 
                         
     def setUp(self):
@@ -126,7 +125,7 @@ class TestCaseSyncBrowserError(WebdriverTestCase):
         self.video_language_pg = video_language_page.VideoLanguagePage(self)
 
         td = {'url': ('http://qa.pculture.org/amara_tests/'
-                   'Birds_short.webmsd.webm')
+                   'Birds_short.mp4')
              }
         self.test_video = self.data_utils.create_video(**td)
         self.video_pg.open_video_page(self.test_video.video_id)

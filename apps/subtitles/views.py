@@ -15,20 +15,25 @@
 #
 # You should have received a copy of the GNU Affero General Public License along
 # with this program.  If not, see http://www.gnu.org/licenses/agpl-3.0.html.
-import json
+import simplejson as json
 from django.contrib.auth.decorators import login_required
 
 from videos.models import Video
 from teams.models import Task
 from subtitles.models import SubtitleLanguage, SubtitleVersion
+from subtitles.templatetags.new_subtitles_tags import visibility_display
 
+from django.http import HttpResponse
 from django.db.models import Count
 from django.contrib import messages
 from django.template import RequestContext
+from django.core.urlresolvers import reverse
 from django.utils.translation import ugettext as _
+from django.views.decorators.http import require_POST
 from django.shortcuts import render_to_response, get_object_or_404, redirect
 
-from teams.permissions import can_post_edit_subtitles, can_assign_task
+
+from teams.permissions import can_add_version
 
 
 def _version_data(version):
@@ -52,16 +57,20 @@ def _language_data(language, editing_version, translated_from_version):
     '''
     versions_data = []
 
-    for version_number in range(1, language.num_versions +1):
-        version_data = {'version_no':version_number}
-        if editing_version and editing_version.version_number == version_number and \
+    for version in language.subtitleversion_set.full():
+        version_data = {
+            'version_no':version.version_number,
+            'visibility': visibility_display(version)
+        }
+        if editing_version and editing_version == version and \
             editing_version.subtitle_language == language:
             version_data.update(_version_data(editing_version))
-        elif translated_from_version and translated_from_version.version_number == version_number and \
+        elif translated_from_version and translated_from_version == version and \
             translated_from_version.subtitle_language == language:
             version_data.update(_version_data(translated_from_version))
 
         versions_data.append(version_data)
+
 
     subtitle_language = editing_version.subtitle_language if editing_version else ''
 
@@ -79,55 +88,26 @@ def _language_data(language, editing_version, translated_from_version):
         'is_primary_audio_language': language.is_primary_audio_language()
     }
 
-def _check_team_video_locking(user, video, language_code, task_id=None):
-    """Check whether the a team prevents the user from editing the subs.
-
-    Returns a message appropriate for sending back if the user should be
-    prevented from editing them, or None if the user can safely edit.
-
-    """
-    team_video = video.get_team_video()
-
-    if not team_video:
-        # If there's no team video to worry about, just bail early.
-        return None, None
-
-    team = team_video.team
-
-    if team.is_visible:
-        message = _(u"These subtitles are moderated. See the %s team page for information on how to contribute." % str(team_video.team))
-    else:
-        message = _(u"Sorry, these subtitles are privately moderated.")
-
-    if not team_video.video.can_user_see(user):
-        return message, None
-
+def regain_lock(request, video_id, language_code):
+    video = get_object_or_404(Video, video_id=video_id)
     language = video.subtitle_language(language_code)
 
-    if (language and language.is_complete_and_synced()
-                 and team.moderates_videos()
-                 and not can_post_edit_subtitles(team, user)):
-        return _("Sorry, you do not have the permission to edit these subtitles. If you believe that they need correction, please contact the team administrator."), None
+    if not language.can_writelock(request.browser_id):
+        return HttpResponse(json.dumps({'ok': False}))
 
-    # Check that there are no open tasks for this action.
-    # todo: make this better.
-    if task_id:
-        task_id = task_id.strip('/')
-        tasks = [Task.objects.get(id=task_id)]
-    else:
-        tasks = team_video.task_set.incomplete().filter(language__in=[language_code, ''])
+    language.writelock(request.user, request.browser_id, save=True)
+    return HttpResponse(json.dumps({'ok': True}))
 
-    if tasks:
-        task = tasks[0]
-        # can_assign verify if the user has permission to either
-        # 1. assign the task to himself
-        # 2. do the task himself (the task is assigned to him)
-        if (task.assignee and task.assignee != user) or (not task.assignee and not can_assign_task(task, user)):
-            return _("You can't edit because there is a task for this language and you can't complete it."), task
-        else:
-            return None, task
+@login_required
+@require_POST
+def release_lock(request, video_id, language_code):
+    video = get_object_or_404(Video, video_id=video_id)
+    language = video.subtitle_language(language_code)
 
-    return None, None
+    if language.can_writelock(request.browser_id):
+        language.release_writelock()
+
+    return HttpResponse(json.dumps({'url': reverse('videos:video', args=(video_id,))}))
 
 @login_required
 def subtitle_editor(request, video_id, language_code, task_id=None):
@@ -150,19 +130,18 @@ def subtitle_editor(request, video_id, language_code, task_id=None):
         messages.error(request, _("You can't edit this subtitle because it's locked"))
         return redirect(video)
 
-    message, task = _check_team_video_locking(request.user, video, language_code, task_id)
-
-    if message:
-        messages.error(request, message)
+    check_result = can_add_version(request.user, video, language_code)
+    if not check_result:
+        messages.error(request, check_result.message)
         return redirect(video)
 
     editing_language.writelock(request.user, request.browser_id, save=True)
 
-    # if this language is a traslation, show both
+    # if this language is a translation, show both
     editing_version = editing_language.get_tip(public=False)
     translated_from_version = None
     lineage = editing_version and editing_version.get_lineage()
-    translated_from_language_code = editing_language.get_translation_source_language()
+    translated_from_language_code = editing_language.get_translation_source_language_code()
 
     if editing_version and translated_from_language_code and \
         translated_from_language_code != editing_language.language_code :
@@ -175,7 +154,17 @@ def subtitle_editor(request, video_id, language_code, task_id=None):
     languages = video.newsubtitlelanguage_set.having_nonempty_versions().annotate(
         num_versions=Count('subtitleversion'))
 
+    video_urls = []
+    for v in video.get_video_urls():
+
+        # Force controls for YouTube players.
+        if 'youtube.com' in v.url:
+            v.url = v.url + '&controls=1'
+
+        video_urls.append(v.url)
+
     editor_data = {
+        'allowsSyncing': bool(request.GET.get('allowsSyncing', False)),
         # front end needs this to be able to set the correct
         # api headers for saving subs
         'authHeaders': {
@@ -184,11 +173,14 @@ def subtitle_editor(request, video_id, language_code, task_id=None):
         },
         'video': {
             'id': video.video_id,
-            'videoURL': video.get_video_url()
+            'primaryVideoURL': video.get_video_url(),
+            'videoURLs': video_urls,
         },
         'languages': [_language_data(lang, editing_version, translated_from_version) for lang in languages],
+        'languageCode': request.LANGUAGE_CODE
     }
 
+    task = task_id and Task.objects.get(pk=task_id)
     if task:
         editor_data['task_id'] = task.id
         editor_data['task_needs_pane'] = task.get_type_display() in ('Review', 'Approve')

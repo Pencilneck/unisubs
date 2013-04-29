@@ -242,7 +242,7 @@ class TestCaseTimedText(WebdriverTestCase):
         """
         test_file = 'Timed_text.en.txt'
         sub_file = os.path.join(self.subs_data_dir, test_file)
-        self._upload_and_verify( sub_file, 'English', 'en', 72 )
+        self._upload_and_verify(sub_file, 'English', 'en', 72)
 
     def test_timed__srt(self):
         """Upload timed subs (sv) in a srt file.
@@ -250,7 +250,7 @@ class TestCaseTimedText(WebdriverTestCase):
         """
         test_file = 'Timed_text.sv.srt'
         sub_file = os.path.join(self.subs_data_dir, test_file)
-        self._upload_and_verify( sub_file, 'Swedish', 'sv', 72 )
+        self._upload_and_verify(sub_file, 'Swedish', 'sv', 72)
        
 
     def test_timed__sbv(self):
@@ -259,7 +259,7 @@ class TestCaseTimedText(WebdriverTestCase):
         """
         test_file = 'Timed_text.zh-cn.sbv'
         sub_file = os.path.join(self.subs_data_dir, test_file)       
-        self._upload_and_verify(sub_file, 'Chinese, Simplified', 'zh-cn', 243 )
+        self._upload_and_verify(sub_file, 'Chinese, Simplified', 'zh-cn', 243)
 
     def test_timed__ssa(self):
         """Upload timed subs (hu) in a ssa file.
@@ -267,7 +267,7 @@ class TestCaseTimedText(WebdriverTestCase):
         """
         test_file = 'Timed_text.hu.ssa'
         sub_file = os.path.join(self.subs_data_dir, test_file)       
-        self._upload_and_verify(sub_file, 'Hungarian', 'hu', 243 )
+        self._upload_and_verify(sub_file, 'Hungarian', 'hu', 243)
 
 
     def test_timed__ttml(self):
@@ -276,7 +276,7 @@ class TestCaseTimedText(WebdriverTestCase):
         """
         test_file = 'Timed_text.ar.xml'
         sub_file = os.path.join(self.subs_data_dir, test_file)       
-        self._upload_and_verify(sub_file, 'Arabic', 'ar', 243 )
+        self._upload_and_verify(sub_file, 'Arabic', 'ar', 243)
 
     def test_timed__dfxp(self):
         """Upload timed subs (sv) in a dfxp file.
@@ -284,8 +284,29 @@ class TestCaseTimedText(WebdriverTestCase):
         """
         test_file = 'Timed_text.sv.dfxp'
         sub_file = os.path.join(self.subs_data_dir, test_file)       
-        self._upload_and_verify(sub_file, 'Swedish', 'sv', 72 )
+        self._upload_and_verify(sub_file, 'Swedish', 'sv', 72)
 
+    def test_xml_entities__ssa(self):
+        """Upload subs with entities (&) in ssa format.
 
+        """
+        test_file = 'xml_entities.en.ssa'
+        sub_file = os.path.join(self.subs_data_dir, test_file)       
+        self._upload_and_verify(sub_file, 'English', 'en', 5)
 
+    def test_xml_entities__sbv(self):
+        """Upload subs with entities (&) in sbv format.
+
+        """
+        test_file = 'xml_entities.en.sbv'
+        sub_file = os.path.join(self.subs_data_dir, test_file)       
+        self._upload_and_verify(sub_file, 'English', 'en', 1194)
+
+    def test_xml_entities__srt(self):
+        """Upload subs with entities (&) in srt format.
+
+        """
+        test_file = 'xml_entities.en.srt'
+        sub_file = os.path.join(self.subs_data_dir, test_file)       
+        self._upload_and_verify(sub_file, 'English', 'en', 5)
 

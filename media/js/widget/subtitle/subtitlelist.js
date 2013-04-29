@@ -115,12 +115,23 @@ unisubs.subtitle.SubtitleList.prototype.enterDocument = function() {
             this.captionInserted_).
         listen(
             this.captionSet_,
+            et.RESET_SUBS,
+            this.captionsReset_).
+        listen(
+            this.captionSet_,
             et.DELETE,
             this.captionDeleted_);
     if (this.addSubtitleButton_ && !this.readOnly_) {
         this.listenForAdd_();
     }
 };
+unisubs.subtitle.SubtitleList.prototype.captionsReset_ = function(event) {
+    this.captionsCleared_(event);
+    for (var i = 0; i < this.captionSet_.count(); i++) {
+        this.addSubtitle( this.captionSet_.captions_[i],  i, false, true );
+    }
+    this.setLastSub_();
+}
 unisubs.subtitle.SubtitleList.prototype.captionsCleared_ = function(event) {
     this.subtitleList_ = [];
     while (this.getChildCount() > 1)
@@ -182,6 +193,7 @@ unisubs.subtitle.SubtitleList.prototype.captionInserted_ = function(e) {
     }
     goog.array.insertAt(this.subtitleList_, subtitleWidget, addedCaption.getCaptionIndex());
     subtitleWidget.switchToEditMode();
+    this.updateAllStartTimes();
 };
 unisubs.subtitle.SubtitleList.prototype.setLastSub_ = function() {
     var subWidget = null;
@@ -266,6 +278,11 @@ unisubs.subtitle.SubtitleList.prototype.setCurrentlyEditing_ = function(editing,
             this.videoPlayer_.playWithNoUpdateEvents(subStartTime, 2);
         }
     }
+};
+unisubs.subtitle.SubtitleList.prototype.updateAllStartTimes = function() {
+    goog.array.forEach(this.subtitleList_, function(w) {
+        goog.dom.setTextContent(w.timeElement_, unisubs.formatTime(w.originalNode_.getStartTime()));
+    });
 };
 unisubs.subtitle.SubtitleList.prototype.isCurrentlyEditing = function() {
     return this.currentlyEditing_;

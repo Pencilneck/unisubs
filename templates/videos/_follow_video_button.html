@@ -12,7 +12,6 @@
                 isAuthenticated: false,
                 isVideoFollower: false,
                 isLanguageFollower: false,
-                isFollower: false,
                 
                 followCls: 'follow',
                 unfollowCls: 'unfollow',
@@ -21,6 +20,9 @@
             _create: function() {
                 var that = this;
                 this.element.bind('click', function(){that._onClick.apply(that, arguments)})
+                this.element.hover(
+                    function() {that._onHover.apply(that, arguments); },
+                    function() {that._onStopHover.apply(that, arguments);});
                 this._render();
             },
             _setFollowCls: function(){
@@ -31,9 +33,25 @@
                 this.element.removeClass(this.options.followCls)
                             .addClass(this.options.unfollowCls)
             },            
+            _onHover: function() {
+                if(this._isFollower()) {
+                    this.element.html('{% trans "x Stop Following" %}');
+                } else {
+                    this.element.html('{% trans "✓ Click to Follow" %}');
+                }
+            },
+            _onStopHover: function() {
+                this._render();
+            },
+            _isFollower: function() {
+                if(this.options.languageId) {
+                    return this.options.isLanguageFollower;
+                } else {
+                    return this.options.isVideoFollower;
+                }
+            },
             _render: function(){
-                if((!this.options.languageId && this.options.isVideoFollower) || (this.options.languageId && this.options.isLanguageFollower)){
-                    this.options.isFollower = true;
+                if(this._isFollower()) {
                     this.element.html('{% trans "✓ Following"|escapejs %}');
                     this._setUnfollowCls();
                 } else {
@@ -47,7 +65,7 @@
                     return;
                 };
 
-                if(this.options.isFollower) {
+                if(this._isFollower()) {
                     this.showUnfollowDialog();
                 } else {
                     this.showFollowDialog();

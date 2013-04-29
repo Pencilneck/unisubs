@@ -50,7 +50,7 @@ YOUTUBE_ALWAYS_PUSH_USERNAME = getattr(settings,
 _('Private video')
 _('Undefined error')
 
-
+FROM_YOUTUBE_MARKER = u'From youtube'
 class TooManyRecentCallsException(Exception):
     """
     Raised when the Youtube API responds with yt:quota too_many_recent_calls.
@@ -214,6 +214,7 @@ def save_subtitles_for_lang(lang, video_pk, youtube_id):
     from videos.models import Video
     from videos.tasks import video_changed_tasks
     from subtitles.pipeline import add_subtitles
+    from subtitles.models import ORIGIN_IMPORTED
 
     yt_lc = lang.get('lang_code')
 
@@ -244,22 +245,29 @@ def save_subtitles_for_lang(lang, video_pk, youtube_id):
     except Video.DoesNotExist:
         return
 
-    url = u'http://www.youtube.com/api/timedtext?v=%s&lang=%s&name=%s'
+    url = u'http://www.youtube.com/api/timedtext?v=%s&lang=%s&name=%s&fmt=srt'
     url = url % (youtube_id, yt_lc, urlquote(lang.get('name', u'')))
 
     xml = YoutubeVideoType._get_response_from_youtube(url, return_string=True)
 
-    if xml is None:
+    if not bool(xml):
         return
 
     xml = force_unicode(xml, 'utf-8')
 
-    subs = babelsubs.parsers.discover('youtube').parse(xml).to_internal()
-    add_subtitles(video, lc, subs, note="From youtube")
+    subs = babelsubs.parsers.discover('srt').parse(xml).to_internal()
+    version = add_subtitles(video, lc, subs, note="From youtube", complete=True, origin=ORIGIN_IMPORTED)
 
+    # do not pass a version_id else, we'll trigger emails for those edits
     video_changed_tasks.delay(video.pk)
-
     Meter('youtube.lang_imported').inc()
+    from apps.teams.models import BillingRecord
+    # there is a caveat here, if running with CELERY_ALWAYS_EAGER,
+    # this is called before there's a team video, and the billing records won't
+    # be created. On the real world, it should be safe to assume that between
+    # calling the youtube api and the db insertion, we'll get this called
+    # when the video is already part of a team
+    BillingRecord.objects.insert_record(version)
 
 
 def should_add_credit(subtitle_version=None, video=None):
@@ -285,11 +293,13 @@ def add_credit(subtitle_version, subs):
 
     from accountlinker.models import get_amara_credit_text
 
-    language_code = subtitle_version.language_code
-    dur = subtitle_version.video.duration
+    language_code = subtitle_version.subtitle_language.language_code
+    dur = subtitle_version.subtitle_language.video.duration
 
     last_sub = subs[-1]
-    time_left_at_the_end = (dur * 1000) - last_sub[1]
+    if last_sub.end_time is None:
+        return subs
+    time_left_at_the_end = (dur * 1000) - last_sub.end_time
 
     if time_left_at_the_end <= 0:
         return subs
@@ -305,6 +315,7 @@ def add_credit(subtitle_version, subs):
         get_amara_credit_text(language_code),
         {}
     )
+    print subs.subtitle_items()
 
     return subs
 
@@ -330,8 +341,11 @@ class YoutubeVideoType(VideoType):
         self.url = url
         self.videoid = self._get_video_id(self.url)
         self.entry = self._get_entry(self.video_id)
-        author = self.entry.author[0]
-        self.username = author.name.text
+
+        # we can't rely on author.name as that might not be unique
+        # and it also won't match what the 3rd party account has
+        username_url = self.entry.author[0].uri.text
+        self.username = username_url[username_url.rfind("/")+ 1:]
 
     @property
     def video_id(self):
@@ -623,9 +637,9 @@ class YouTubeApiBridge(gdata.youtube.client.YouTubeClient):
 
         if not self.is_always_push_account:
             subs = add_credit(subtitle_version, subs)
-            self.add_credit_to_description(subtitle_version.language.video)
+            self.add_credit_to_description(subtitle_version.subtitle_language.video)
 
-        content = babelsubs.generators.discover('srt').generate(subs)
+        content = babelsubs.generators.discover('srt').generate(subs).encode('utf-8')
         title = ""
 
         if hasattr(self, "captions") is False:
@@ -671,7 +685,7 @@ class YouTubeApiBridge(gdata.youtube.client.YouTubeClient):
         entry = entry.to_string()
         entry = gdata.youtube.YouTubeVideoEntryFromString(entry)
 
-        old_description = entry.media.description.text
+        old_description = entry.media.description.text or ''
 
         if old_description:
             old_description = old_description.decode("utf-8")

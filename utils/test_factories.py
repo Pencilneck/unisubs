@@ -21,8 +21,10 @@
 
 import itertools
 
+from django.contrib.auth.hashers import make_password
+
 from apps.auth.models import CustomUser as User
-from apps.teams.models import Project, Team, TeamMember, TeamVideo
+from apps.teams.models import Project, Team, TeamMember, TeamVideo, Workflow
 from apps.videos.types import video_type_registrar
 from apps.videos.models import Video, VideoUrl
 
@@ -36,11 +38,11 @@ def create_user(password=None, **kwargs):
         'valid_email': True,
     }
     defaults.update(kwargs)
-    user = User.objects.create(**defaults)
     if password is not None:
-        user.set_password(password)
-        user.save()
-    return user
+        defaults['password'] = make_password(password)
+    else:
+        defaults['password'] = make_password('password')
+    return User.objects.create(**defaults)
 
 create_video_counter = itertools.count()
 def create_video(url=None, **kwargs):
@@ -71,13 +73,23 @@ def create_team(**kwargs):
     defaults.update(kwargs)
     return Team.objects.create(**defaults)
 
+def create_workflow(team, **kwargs):
+    defaults = {
+        'review_allowed': 30, # ADMIN_MUST_REVIEW
+        'approve_allowed': 20 # ADMIN_MUST_APPROVE
+    }
+    defaults.update(kwargs)
+    return Workflow.objects.create(team=team, **defaults)
+
 def create_team_video(team, added_by, video=None, **kwargs):
     if video is None:
         video = create_video()
     return TeamVideo.objects.create(team=team, video=video, added_by=added_by,
                                     **kwargs)
 
-def create_team_member(team, user, **kwargs):
+def create_team_member(team, user=None, **kwargs):
+    if user is None:
+        user = create_user()
     return TeamMember.objects.create(team=team, user=user, **kwargs)
 
 def create_project(team, **kwargs):
@@ -86,3 +98,27 @@ def create_project(team, **kwargs):
     }
     defaults.update(kwargs)
     return Project.objects.create(team=team, **defaults)
+
+def dxfp_sample(language_code):
+    return ("""\
+<tt xmlns="http://www.w3.org/ns/ttml" xml:lang="%s">
+ <head>
+ <metadata xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+ <ttm:title/>
+ <ttm:description/>
+ <ttm:copyright/>
+ </metadata>
+
+ <styling xmlns:tts="http://www.w3.org/ns/ttml#styling">
+ <style xml:id="amara-style" tts:color="white" tts:fontFamily="proportionalSansSerif" tts:fontSize="18px" tts:textAlign="center"/>
+ </styling>
+
+ <layout xmlns:tts="http://www.w3.org/ns/ttml#styling">
+ <region xml:id="amara-subtitle-area" style="amara-style" tts:extent="560px 62px" tts:padding="5px 3px" tts:backgroundColor="black" tts:displayAlign="after"/>
+ </layout>
+ </head>
+ <body region="amara-subtitle-area">
+ <div><p begin="00:00:00,623" end="00:00:04,623">test subtitle</p>
+ </div>
+ </body>
+</tt>""" % language_code)

@@ -54,7 +54,7 @@ class DashboardTab(ATeamPage):
         """Return the webdriver object for a video based on the title.
 
         """
-        time.sleep(2)  #Make sure all the vids have a chance to load.
+        time.sleep(4)  #Make sure all the vids have a chance to load.
         video_els = self.browser.find_elements_by_css_selector(
                       self._VIDEO)
 

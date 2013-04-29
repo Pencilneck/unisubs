@@ -88,9 +88,9 @@ unisubs.subtitle.SubtitleWidget.prototype.createDom = function() {
         unisubs.style.showElement(this.contentElement_, false);
         var startTime = this.subtitleSet_.x['startTime'](this.originalNode_.node);
         if (parseFloat(startTime) > -1) {
-            var timeElement = $d('span', {'className': 'unisubs-timestamp-time-fixed'}, 
+            this.timeElement_ = $d('span', {'className': 'unisubs-timestamp-time-fixed'}, 
                                 unisubs.formatTime(startTime));
-            this.titleElem_.appendChild(timeElement);
+            this.titleElem_.appendChild(this.timeElement_);
         }
     }
     else {

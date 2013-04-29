@@ -75,13 +75,31 @@ class SubtitleLanguageAdmin(admin.ModelAdmin):
     video_title.short_description = 'video'
 
     def version_count(self, sl):
-        return sl.subtitleversion_set.count()
+        return sl.subtitleversion_set.full().count()
     version_count.short_description = 'number of versions'
 
     def tip(self, sl):
-        ver = sl.get_tip()
+        ver = sl.get_tip(full=True)
         return ver.version_number if ver else None
     tip.short_description = 'tip version'
+
+    def save_model(self, request, obj, form, change):
+        from videos.tasks import upload_subtitles_to_original_service
+        should_sync_to_youtube = False
+        # cache the old object
+        old_obj = SubtitleLanguage.objects.get(pk=obj.pk)
+        # save it
+        super(SubtitleLanguageAdmin, self).save_model(request, obj, form,
+                                                      change)
+        # refresh new object so that changes are present
+        obj = SubtitleLanguage.objects.get(pk=obj.pk)
+        if change:
+            should_sync_to_youtube = not old_obj.subtitles_complete and obj.subtitles_complete
+
+        if should_sync_to_youtube:
+            tip = obj.get_tip()
+            # don't run on a async:
+            upload_subtitles_to_original_service.run(tip.pk)
 
 
 class SubtitleVersionAdmin(admin.ModelAdmin):
@@ -91,8 +109,15 @@ class SubtitleVersionAdmin(admin.ModelAdmin):
     raw_id_fields = ['video', 'subtitle_language', 'parents', 'author']
     list_filter = ['created', 'visibility', 'visibility_override',
                    'language_code']
+    list_editable = ['visibility', 'visibility_override']
     search_fields = ['video__video_id', 'video__title', 'title',
                      'language_code', 'description', 'note']
+
+    # Unfortunately Django uses .all() on related managers instead of
+    # .get_query_set().  We've disabled .all() on SubtitleVersion managers so we
+    # can't let Django do this.  This means we can't edit parents in the admin,
+    # but you should never be doing that anyway.
+    exclude = ['parents', 'serialized_subtitles']
 
     # don't allow deletion
     actions = []
@@ -113,7 +138,7 @@ class SubtitleVersionAdmin(admin.ModelAdmin):
         return sv.subtitle_language.get_language_code_display()
 
     def parent_ids(self, sv):
-        pids = map(str, sv.parents.values_list('id', flat=True))
+        pids = map(str, sv.parents.full().values_list('id', flat=True))
         return ', '.join(pids) if pids else None
 
     # Hack to generate lineages properly when modifying versions in the admin
@@ -121,13 +146,13 @@ class SubtitleVersionAdmin(admin.ModelAdmin):
     # models are hooked up everywhere else?
     def response_change(self, request, obj):
         response = super(SubtitleVersionAdmin, self).response_change(request, obj)
-        obj.lineage = get_lineage(obj.parents.all())
+        obj.lineage = get_lineage(obj.parents.full())
         obj.save()
         return response
 
     def response_add(self, request, obj, *args, **kwargs):
         response = super(SubtitleVersionAdmin, self).response_add(request, obj)
-        obj.lineage = get_lineage(obj.parents.all())
+        obj.lineage = get_lineage(obj.parents.full())
         obj.save()
         return response
 

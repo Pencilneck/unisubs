@@ -19,8 +19,9 @@
 (function() {
 
     var root = this;
+    var $ = root.AmarajQuery;
 
-    var VideoController = function($scope, SubtitleStorage) {
+    var VideoController = function($scope, SubtitleStorage, $timeout) {
         /**
          * Responsible for initializing the video and all video controls.
          * @param $scope
@@ -32,13 +33,21 @@
         //
         // If this is a YouTube video, force controls.
 
-        var videoURL = SubtitleStorage.getVideoURL();
+        var videoURLs = SubtitleStorage.getVideoURLs();
 
-        if (videoURL.indexOf('youtube.com') !== -1) {
-            videoURL = videoURL + '&controls=1';
-        }
+        $scope.pop = window.Popcorn.smart('#video', videoURLs);
+        $scope.pop.controls(true);
 
-        $scope.pop = window.Popcorn.smart('#video', videoURL);
+        // We have to broadcast this in a timeout to make sure the TimelineController has
+        // loaded and registered it's event listener, first.
+        //
+        // There most likely is a better way to do this.
+        $scope.pop.on('canplay', function() {
+            $scope.$root.$broadcast('video-ready', $scope.pop);
+        });
+        $scope.pop.on('timeupdate', function() {
+            $scope.$root.$broadcast('video-timechanged', $scope.pop);
+        });
 
         $scope.playChunk = function(start, duration) {
             // Play a specified amount of time in a video, beginning at 'start',
@@ -105,7 +114,7 @@
 
             var parser = subtitle.parser;
 
-            var text = subtitle.parser.content(subtitle.subtitle);
+            var text = subtitle.parser.markdownToHTML($(subtitle.subtitle).text());
             var endTimeSeconds = parser.endTime(subtitle.subtitle) / 1000;
             var startTimeSeconds = parser.startTime(subtitle.subtitle) / 1000;
 
@@ -117,17 +126,36 @@
             });
 
         });
-        $scope.$root.$on('subtitleSelected', function($event, subtitle) {
+        $scope.$root.$on('subtitle-selected', function($event, subtitle) {
 
             var parser = subtitle.parser;
             var startTimeSeconds = parser.startTime(subtitle.subtitle) / 1000;
 
-            // Set the current time to the start of the subtitle.
-            $scope.pop.currentTime(startTimeSeconds);
+            // If this video is not a Vimeo video, set the current time to
+            // the start of the subtitle.
+            //
+            // We don't do this for Vimeo videos because their player doesn't support
+            // fuzzy-scrubbing to precise keyframes.
+            if ($scope.pop.video._util.type !== 'Vimeo') {
+                $scope.pop.currentTime(startTimeSeconds);
+            }
 
         });
+
+    };
+    var VideoTitleController = function($scope, SubtitleListFinder) {
+
+        $scope.$root.$on('subtitles-fetched', function($event) {
+
+            // Reference the actual scope in the template so we can get automatic binding
+            // on the title and description.
+            $scope.workingSubtitles = SubtitleListFinder.get('working-subtitle-set').scope;
+
+        });
+
     };
 
     root.VideoController = VideoController;
+    root.VideoTitleController = VideoTitleController;
 
 }).call(this);

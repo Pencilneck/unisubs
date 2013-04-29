@@ -116,18 +116,14 @@
             {% endif %}
         </h3>
         {% if video.subtitle_language or translations %}
-            <div>
-                <div>
-                    <ul id="subtitles-menu" {% if video.languages_count > 14 %} class="list-collapsible"{% endif %}>
-                        {% include 'videos/_left_navigation.html' %}
-                        {% if video.languages_count > 14 %}
-                            <li class="expand">
-                                <a href="#"><span class="all">{% trans 'Show all' %} ↓</span><span class="less">{% trans 'Show less' %} ↑</span></a>
-                            </li>
-                        {% endif %}
-                    </ul>
-                </div>
-            </div>
+            <ul id="subtitles-menu" {% if video.languages_count > 14 %} class="list-collapsible"{% endif %}>
+                {% include 'videos/_left_navigation.html' %}
+                {% if video.languages_count > 14 %}
+                    <li class="expand">
+                        <a href="#"><span class="all">{% trans 'Show all' %} ↓</span><span class="less">{% trans 'Show less' %} ↑</span></a>
+                    </li>
+                {% endif %}
+            </ul>
         {% else %}
             {% if request.user|can_create_subtitles_for:video or request.user|can_create_translations_for:video %}
                 {% with video.get_team_video as team_video %}
