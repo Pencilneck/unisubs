@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see 
 # http://www.gnu.org/licenses/agpl-3.0.html.
+import sys
 
 from vidscraper.sites import wistia
 from vidscraper.errors import Error as VidscraperError
@@ -66,7 +67,8 @@ class WistiaVideoType(VideoType):
     def set_values(self, video_obj):
         try:
             video_obj.thumbnail = wistia.get_thumbnail_url(self.url, self.shortmem) or ''
-            video_obj.small_thumbnail = wistia.get_small_thumbnail_url(self.url, self.shortmem) or ''
+            #video_obj.small_thumbnail = wistia.get_small_thumbnail_url(self.url, self.shortmem) or ''
+            video_obj.small_thumbnail = video_obj.thumbnail + '&image_resize=200'
             video_obj.title = wistia.scrape_title(self.url, self.shortmem)
             video_obj.description = strip_tags(wistia.scrape_description(self.url, self.shortmem))
             video_obj.save()

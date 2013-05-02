@@ -55,15 +55,14 @@ EMBED_HEIGHT = 344
 def get_shortmem(url):
     shortmem = {}
     video_id = WISTIA_REGEX.match(url).groupdict()['video_id']
-    apiurl = '%s?%s' % (WISTIA_OEMBED_API_URL, urllib.quote(url))
+    apiurl = '%s%s' % (WISTIA_OEMBED_API_URL, urllib.quote(url))
     finalexcept = None
     
     backoff = util.random_exponential_backoff(2)
 
     for i in range(3):
         try:
-            reponse = urllib.urlopen(apiurl)
-            
+            response = urllib.urlopen(apiurl)
             api_raw_data = response.read()
             api_data = simplejson.loads(api_raw_data)
         except Exception as e:
@@ -75,7 +74,6 @@ def get_shortmem(url):
                     
         backoff.next()
         
-    
     if 'oembed' in shortmem:
         return shortmem
 
