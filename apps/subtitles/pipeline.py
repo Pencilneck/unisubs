@@ -56,7 +56,10 @@ a nutshell:
 
 from django.db import transaction
 
-from apps.subtitles.models import SubtitleLanguage, SubtitleVersion, ORIGIN_ROLLBACK
+from apps.subtitles.models import (
+    SubtitleLanguage, SubtitleVersion, ORIGIN_ROLLBACK, ORIGIN_API,
+    ORIGIN_UPLOAD
+)
 
 
 # Utility Functions -----------------------------------------------------------
@@ -301,11 +304,8 @@ def _update_video_title(subtitle_language, version):
             version.video.save()
 
 def _fork_dependents(subtitle_language):
-    dependents = [sl.id for sl in
-                  subtitle_language.get_dependent_subtitle_languages()]
-
-    if dependents:
-        SubtitleLanguage.objects.filter(id__in=dependents).update(is_forked=True)
+    for dsl in subtitle_language.get_dependent_subtitle_languages(direct=True):
+        dsl.fork()
 
 def _get_version(video, v):
     """Get the appropriate SV belonging to the given video.
@@ -359,11 +359,6 @@ def _add_subtitles(video, language_code, subtitles, title, description, author,
 
     """
     sl, language_needs_save = _get_language(video, language_code)
-
-    if complete != None:
-        sl.subtitles_complete = complete
-        language_needs_save = True
-
     if language_needs_save:
         sl.save()
 
@@ -375,10 +370,18 @@ def _add_subtitles(video, language_code, subtitles, title, description, author,
     _strip_nones(data)
 
     version = sl.add_version(subtitles=subtitles, **data)
-
+    if complete != None:
+        is_complete = complete and version.get_subtitles().fully_synced
+        # only save if the value has changed
+        if is_complete != sl.subtitles_complete:
+            sl.subtitles_complete = is_complete
+            sl.save()
     _update_video_title(sl, version)
     _update_followers(sl, author)
     _perform_team_operations(version, committer, complete)
+
+    if origin in (ORIGIN_UPLOAD, ORIGIN_API):
+        _fork_dependents(sl)
 
     return version
 

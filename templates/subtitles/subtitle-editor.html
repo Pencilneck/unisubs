@@ -8,7 +8,8 @@
     <meta charset="utf-8" />
     <title>Editing {{ language.get_language_code_display }} subtitles for &ldquo;{{ video }}&rdquo; - Amara</title>
 
-    <link href='http://fonts.googleapis.com/css?family=Open+Sans' rel='stylesheet' type='text/css'>
+    {# include bold style too #}
+    <link href='http://fonts.googleapis.com/css?family=Open+Sans:400,700' rel='stylesheet' type='text/css'>
 
     <link rel="stylesheet" href="{{ STATIC_URL }}src/css/third-party/reset.css" type="text/css" media="screen" charset="utf-8">
     <link rel="stylesheet" href="{{ STATIC_URL }}src/css/subtitle-editor/subtitle-editor-dev.css" type="text/css" media="screen" charset="utf-8">
@@ -74,10 +75,10 @@
         <section class="status right column group">
             <div ng-cloak class="ng-cloak" ng-controller="SaveSessionController">
                 <div class="exit dropdown">
-                    <a class="discard" ng-click="discard()">
+                    <a class="discard" href="#" ng-click="discard()">
                         Exit
                     </a>
-                    <a class="save" ng-click="save()">
+                    <a class="save" href="#" ng-class="{ disabled: !changesMade }" ng-click="save()">
                         Save
                     </a>
                 </div>
@@ -101,7 +102,10 @@
     <section class="main ng-cloak" ng-cloak>
         <section class="left column">
             <div class="help-panel" ng-controller="HelpController">
+                <!-- not ready for release just yet
                 <a class="advanced" ng-click="showAdvancedModal()">Advanced &raquo;</a>
+                -->
+
                 <h1>Keyboard controls</h1>
                 <ul ng-show="commands">
                     <li ng-repeat="command in commands" class="group">
@@ -117,11 +121,15 @@
             <div class="preview">
                 Amara editor preview. <a href="#" target="blank">Learn more or leave feedback</a>.
             </div>
-            <div class="language-selections group" ng-controller="LanguageSelectorController">
+            <div class="language-selections group"
+                language-selector
+                 initial-version-number="{{ translated_from_version.version_number }}"
+                 initial-language-code="{% firstof translated_from_version.subtitle_language.language_code language.language_code %}"                        ng-model="language"
+                 ng-controller="LanguageSelectorController">
                 <div class="select">
                     <select name="language"
-                            ng-model="language"
-                            ng-options="item.name for item in languages">
+                        ng-model='language'
+                        ng-options="item.name for item in languages">
                     </select>
                 </div>
                 <div class="select">
@@ -130,7 +138,7 @@
                         <option
                                 ng-repeat='thisVersion in versions'
                                 ng-selected='version == thisVersion'
-                                ng-disabled='thisVersion.visibility == "Deleted"'
+                                ng-disabled='thisVersion.visibility != "Public"'
                                 ng-model='thisVersion'
                                 value="[[$index]]">
                             [[thisVersion|versionDropDownDisplay]]</option>
@@ -142,8 +150,6 @@
 
                     <ul subtitle-list="reference-subtitle-set"
                         editable="false"
-                        version-number="{{ translated_from_version.version_number }}"
-                        language-code="{{ translated_from_version.subtitle_language.language_code }}"
                         video-id="{{ video.video_id }}">
 
                         <li ng-repeat="subtitle in subtitles"
@@ -156,7 +162,7 @@
                             </span>
 
                             <span ng-show="!isEditing"
-                                  ng-bind-html-unsafe="parser.contentRendered(subtitle)"
+                                  ng-bind-html-unsafe="contentAsHTML"
                                   class="subtitle-text">
                             </span>
 
@@ -217,7 +223,7 @@
                             </div>
 
                             <span ng-show="!isEditing"
-                                  ng-bind-html-unsafe="parser.contentRendered(subtitle)"
+                                  ng-bind-html-unsafe="contentAsHTML"
                                   class="subtitle-text">
                             </span>
 

@@ -370,6 +370,10 @@ header.main {
                     background: #126295;
                     color: white;
                 }
+                &.disabled {
+                    background: #888;
+                    cursor: default;
+                }
             }
         }
     }
@@ -673,7 +677,7 @@ section.main {
                 overflow: hidden;
                 padding: 10px 10px;
                 position: relative;
-                width: 33%;
+                width: 42%;
 
                 select {
                     background: transparent;

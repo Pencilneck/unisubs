@@ -26,14 +26,14 @@ from django.utils.translation import ugettext_lazy as _
 
 from apps.subtitles import pipeline
 from apps.subtitles.shims import is_dependent
-from apps.subtitles.models import ORIGIN_UPLOAD
+from apps.subtitles.models import ORIGIN_UPLOAD, SubtitleLanguage
 from apps.teams.models import Task
 from apps.teams.permissions import (
     can_perform_task, can_create_and_edit_subtitles,
     can_create_and_edit_translations
 )
 from apps.videos.tasks import video_changed_tasks
-from utils.translation import get_language_choices
+from utils.translation import get_language_choices, get_language_label
 
 
 SUBTITLE_FILESIZE_LIMIT_KB = 512
@@ -67,10 +67,12 @@ class SubtitlesUploadForm(forms.Form):
         self.fields['language_code'].choices = all_languages
         self.fields['primary_audio_language_code'].choices = all_languages
 
-        # TODO: Check that the subtitles are synced as well?
-        choices = [(sl.language_code, sl.get_language_code_display())
-                   for sl in video.newsubtitlelanguage_set.all()
-                   if sl.subtitles_complete]
+        language_qs = (SubtitleLanguage.objects.having_public_versions()
+                       .filter(video=video))
+        choices = [
+            (sl.language_code, sl.get_language_code_display())
+            for sl in language_qs
+        ]
         if allow_transcription:
             choices.append(('', 'None (Direct from Video)'))
 
@@ -105,16 +107,6 @@ class SubtitlesUploadForm(forms.Form):
             elif existing_from_language_code and existing_from_language_code != from_language_code:
                 raise forms.ValidationError(_(
                     u"The language already exists as a translation from %s." % existing_from_language.get_language_code_display()))
-
-    def _verify_no_dependents(self, subtitle_language):
-        # You cannot upload to a language with dependents.
-        dependents = subtitle_language.get_dependent_subtitle_languages()
-        if dependents:
-            raise forms.ValidationError(_(
-                u"Sorry, we cannot upload subtitles for this language "
-                u"because this would fork the %s translation(s) made from it."
-                % ", ".join([sl.get_language_code_display() for sl in dependents])
-            ))
 
     def _verify_no_blocking_subtitle_translate_tasks(self, team_video,
                                                      language_code):
@@ -249,9 +241,18 @@ class SubtitlesUploadForm(forms.Form):
         if from_language_code:
             # If this is a translation, we'll retrieve the source
             # language/version here so we can use it later.
-            sl = self.video.subtitle_language(from_language_code)
-            self.from_sl = sl
-            self.from_sv = sl.get_tip(public=True) if sl else None
+            self.from_sl = self.video.subtitle_language(from_language_code)
+            if self.from_sl is None:
+                raise forms.ValidationError(
+                    _(u'Invalid from language: %(language)s') % {
+                        'language': get_language_label(from_language_code),
+                    })
+            self.from_sv = self.from_sl.get_tip(public=True)
+            if self.from_sv is None:
+                raise forms.ValidationError(
+                    _(u'%(language)s has no public versions') % {
+                        'language': get_language_label(from_language_code),
+                    })
         else:
             self.from_sl = None
             self.from_sv = None
@@ -273,12 +274,6 @@ class SubtitlesUploadForm(forms.Form):
             #    than the user gave.
             self._verify_no_translation_conflict(subtitle_language,
                                                  from_language_code)
-
-            # Make sure that the language being uploaded to has no translations
-            # that are based on it.  We do this because uploading to a source
-            # language would require us to fork all the translations, and that's
-            # not nice.  See Sifter #1075 for more information.
-            self._verify_no_dependents(subtitle_language)
 
         # If we are translating from another version, check that the number of
         # subtitles matches the source.
@@ -317,7 +312,7 @@ class SubtitlesUploadForm(forms.Form):
         title, description = self.video.title, self.video.description
 
         if subtitle_language:
-            previous_version = subtitle_language.get_tip(public=True)
+            previous_version = subtitle_language.get_tip()
             if previous_version:
                 title = previous_version.title
                 description = previous_version.description
@@ -392,13 +387,12 @@ class SubtitlesUploadForm(forms.Form):
         #
         # For example: assume there is a French translation of English.
         # Uploading a "straight from video" version of French should fork it.
-        if not from_language_code and is_dependent(version.subtitle_language):
-            version.subtitle_language.is_forked = True
-            version.subtitle_language.save()
+        sl = version.subtitle_language
+        if not from_language_code and is_dependent(sl):
+            sl.fork()
 
         # TODO: Pipeline this.
-        video_changed_tasks.delay(version.subtitle_language.video_id,
-                                  version.id)
+        video_changed_tasks.delay(sl.video_id, version.id)
 
         return version
 

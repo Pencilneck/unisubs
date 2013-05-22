@@ -106,16 +106,17 @@ class WorkflowAdmin(admin.ModelAdmin):
     ordering = ('-created',)
 
 class TaskAdmin(admin.ModelAdmin):
-    # We specifically pull assignee, team_video, team, and language out into
-    # properties to force extra queries per row.  This sounds like a bad idea,
-    # but:
+    # We specifically pull old/new subtitle version, assignee, team_video, team,
+    # and language out into properties to force extra queries per row.
     #
-    # 1. MySQL was performing a full table scan when using the select_related()
-    #    for some reason.
-    # 2. It's only a few extra queries, so it's not the end of the world.
+    # This sounds like a bad idea, but when we allow Django to use the
+    # select_related to add the INNER JOIN clauses MySQL decides to do horrible
+    # things.
+    #
+    # It's only a hundred little queries or so, so it's not a super big deal.
     list_display = ('id', 'type', 'team_title', 'team_video_title',
                     'language_title', 'assignee_name', 'is_complete', 'deleted',
-                    'subtitle_version', 'new_subtitle_version')
+                    'old_subtitle_version_str', 'new_subtitle_version_str',)
     list_filter = ('type', 'deleted', 'created', 'modified', 'completed')
     search_fields = ('assignee__username', 'team__name', 'assignee__first_name',
                      'assignee__last_name', 'team_video__video__title')
@@ -125,6 +126,14 @@ class TaskAdmin(admin.ModelAdmin):
     readonly_fields = ('created', 'modified')
     ordering = ('-id',)
     list_per_page = 20
+
+    def old_subtitle_version_str(self, o):
+        return unicode(o.subtitle_version) if o.subtitle_version else ''
+    old_subtitle_version_str.short_description = 'old subtitle version'
+
+    def new_subtitle_version_str(self, o):
+        return unicode(o.new_subtitle_version) if o.new_subtitle_version else ''
+    new_subtitle_version_str.short_description = 'new subtitle version'
 
     def is_complete(self, o):
         return True if o.completed else False

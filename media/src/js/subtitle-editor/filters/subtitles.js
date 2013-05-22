@@ -21,6 +21,7 @@ var angular = angular || null;
     var root, module;
     root = this;
     module = angular.module('amara.SubtitleEditor.filters', ['amara.SubtitleEditor']);
+    var HIDES_ON = ['Deleted', 'Private']
 
     function leftPad(number, width, character) {
         /*
@@ -84,7 +85,9 @@ var angular = angular || null;
     module.filter('versionDropDownDisplay', function(){
         return function (versionData){
             var res =  'Version ' + versionData.version_no +
-                (versionData.visibility == 'Deleted' ? " (Deleted)": "");
+                        (HIDES_ON.indexOf(versionData.visibility) > -1 ?
+                            " (" + versionData.visibility + ")":
+                            "");
             return res;
         }
     })

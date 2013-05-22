@@ -15,19 +15,22 @@ class VideoLanguagePage(VideoPage):
     _SUB_LINES = "div.translation-text"
     _VIEW_NOTICE = 'p.view-notice'
     _DRAFT_NOTICE = 'p.view-notice.draft'
+    
+    #DELETE SUBTITLE LANGUAGE
+     
     _DELETE_SUBTITLE_LANGUAGE = 'a[href*="delete-language"]'
-
-    #UNPUBLISH MODAL
-    _VERSION = 'input[value="version"]'
+    _DEPENDENTS = 'label.grouped'
     _LANGUAGE = 'input[value="dependents"]'
-    _DELETE = 'input[name="should_delete"]'
-    _SUBMIT_UNPUBLISH = 'button.pull-right'
+    _SUBMIT_DELETE = 'div.submit button.button'
+    _CONFIRM_TEXT = 'input#id_verify_text' #Yes I want to delete this language
 
     #SUBTITLES TAB
     _EDIT_SUBTITLES = "a#edit_subtitles_button"
     _DOWNLOAD_SUBS = "span.sort_label strong"
     _DOWNLOAD_OPTION = "div.sort_button ul li" 
-    EDIT_INACTIVE_TEXT = 'You do not have permission to edit this version'
+    EDIT_INACTIVE_TEXT = 'You do not have permission to edit this version.'
+    EDIT_VIA_TASK_TEXT = ('You must use the tasks panel to work with this '
+                          'version.')
     _ROLLBACK = "a#rollback" 
 
     def open_video_lang_page(self, video_id, lang_code):
@@ -90,17 +93,34 @@ class VideoLanguagePage(VideoPage):
     def view_notice(self):
         return self.get_text_by_css(self._VIEW_NOTICE)
 
+
+    def delete_subtitles_language_exists(self):
+        return self.is_element_present(self._DELETE_SUBTITLE_LANGUAGE)
+
+    def dependent_langs(self):
+        lang_list = []
+        lang_els = self.get_elements_list(self._DEPENDENTS)
+        for el in lang_els:
+            lang_list.append(el.text)
+        return lang_list, lang_els
+
+
     def delete_subtitle_language(self, languages=None):
         """Completely delete a subtitle language, and optional dependents.
 
         """
         self.click_by_css(self._DELETE_SUBTITLE_LANGUAGE)
-        self.wait_for_element_visible(self._VERSION)
-        delete_option = getattr(self, '_%s' % option)
-        self.click_by_css(delete_option)
-        if delete:
-            self.click_by_css(self._DELETE)
-        self.submit_by_css(self._SUBMIT_UNPUBLISH)
+        #check the boxes of the dependent languages to delete
+        if languages:
+            _, els = self.dependent_langs()
+            for el in els:
+                self.logger.info(el.text)
+                if el.text in languages:
+                    el.find_element_by_css_selector('input').click()
+        #type in the are you sure text
+        self.type_by_css(self._CONFIRM_TEXT, 
+                         'Yes I want to delete this language')
+        self.submit_by_css(self._SUBMIT_DELETE)
 
     def edit_subtitles_exists(self):
         return self.is_element_present(self._EDIT_SUBTITLES)

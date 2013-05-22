@@ -40,8 +40,22 @@ var angular = angular || null;
          * side panel.
          */
 
-        $scope.languageChanged = function(lang) {
-            var vers, language;
+        /**
+         * The second param will be either an int or the version data object,
+         * depending if this is being set from the bootstrapped value or later
+         * fetches.
+         */
+        $scope.changesMade = false;
+        $scope.languageChanged = function(lang, versionOrVersionNumber, another) {
+            // this gets called both on setInitialDisplayLanguage manually at
+            // the first start up, or through the changes to the scope.language.
+            // in the later cases, angular sends (newLang, oldLang) so we can
+            // detect if anything is actually changed. In this case, we just bail
+            // out, because nothing has actually changed.
+            if (lang == versionOrVersionNumber){
+                return;
+            }
+            var vers, language, versionNumber;
 
             if (lang) {
                 language = lang;
@@ -59,15 +73,28 @@ var angular = angular || null;
 
             $scope.versions = vers.reverse();
 
+            if (versionOrVersionNumber !== undefined ){
+                if (!isNaN(parseInt(versionOrVersionNumber.version_no))){
+                    versionNumber = parseInt(versionOrVersionNumber.version_no);
+                }else if(!isNaN(parseInt(versionOrVersionNumber))){
+                    versionNumber = parseInt(versionOrVersionNumber);
+                }
+            }
             if (vers.length && vers.length > 0) {
-                $scope.version = $scope.versions[0];
+                if (isNaN(parseInt(versionNumber))){
+                    $scope.version = $scope.versions[0];
+                }else{
+                    $scope.version = _.find($scope.versions, function(version){
+                        return version.version_no == versionNumber;
+                    });
+                }
             }
         };
-        $scope.setReferenceSubs = function(subtitles) {
+        $scope.setReferenceSubs = function(subtitleData) {
             if (!$scope.refSubList) {
                 $scope.refSubList = SubtitleListFinder.get('reference-subtitle-set');
             }
-            $scope.refSubList.scope.onSubtitlesFetched(subtitles);
+            $scope.refSubList.scope.onSubtitlesFetched(subtitleData);
         };
         $scope.versionChanged = function(newVersion) {
 
@@ -82,27 +109,32 @@ var angular = angular || null;
             var subtitlesXML = newVersion.subtitlesXML;
 
             if (!subtitlesXML) {
-                SubtitleStorage.getSubtitles($scope.language.code, newVersion.version_no, function(subtitles) {
-                    $scope.version.subtitlesXML = subtitles.subtitlesXML;
-                    $scope.setReferenceSubs(subtitles);
-                });
+                SubtitleStorage.getSubtitles(
+                    $scope.language.code,
+                    newVersion.version_no,
+                    function(subtitleData) {
+                        $scope.version.subtitlesXML = subtitleData.subtitlesXML;
+                        $scope.setReferenceSubs(subtitleData);
+                    });
             } else {
                 $scope.setReferenceSubs(newVersion);
             }
         };
 
-        SubtitleStorage.getLanguages(function(languages) {
-            $scope.languages = languages;
-            $scope.language = _.find(languages, function(item) {
-                return item.editingLanguage;
+        $scope.setInitialDisplayLanguage = function(allLanguages, languageCode, versionNumber){
+
+            $scope.languages = allLanguages;
+            $scope.language = _.find(allLanguages, function(item) {
+                return item.code == languageCode;
             });
-            $scope.languageChanged($scope.language);
-        });
+            $scope.languageChanged($scope.language, versionNumber);
+        }
 
         $scope.$watch('language', $scope.languageChanged);
         $scope.$watch('version', $scope.versionChanged);
     };
-    var SaveSessionController = function($scope, SubtitleListFinder, SubtitleStorage) {
+    var SaveSessionController = function($scope, $q, SubtitleListFinder,
+                                         SubtitleStorage, OldEditorConfig) {
 
         $scope.discard = function() {
 
@@ -114,15 +146,20 @@ var angular = angular || null;
             return collabScope.notes || '';
         };
         $scope.saveAndApprove = function() {
+            if($scope.changesMade) {
+                var message = 'Subtitles saved, task approved. Redirecting…';
+            } else {
+                var message = 'Task approved. Redirecting…';
+            }
 
-            $scope.saveSession().then(function(response) {
+            $scope.saveSession().then(function(versionNumber) {
                 if ($scope.status === 'saved') {
 
                     $scope.status = 'approving';
 
-                    SubtitleStorage.approveTask(response, $scope.getNotes()).then(function onSuccess(response) {
+                    SubtitleStorage.approveTask(versionNumber, $scope.getNotes()).then(function onSuccess(response) {
 
-                        $scope.$root.$emit('show-loading-modal', 'Subtitles saved, task approved. Redirecting…');
+                        $scope.$root.$emit('show-loading-modal', message);
                         window.location = $scope.primaryVideoURL;
 
                     }, function onError() {
@@ -134,22 +171,30 @@ var angular = angular || null;
 
         };
         $scope.save = function() {
+            if(!$scope.changesMade) {
+                return;
+            }
 
-            $scope.saveSession().then(function(response) {
+            $scope.saveSession().then(function(versionNumber) {
                 if ($scope.status === 'saved') {
                     $scope.showCloseModal();
                 }
             });
         };
         $scope.saveAndSendBack = function() {
-            $scope.saveSession().then(function(response) {
+            if($scope.changesMade) {
+                var message = 'Subtitles saved, task sent back. Redirecting…';
+            } else {
+                var message = 'Task sent back. Redirecting…';
+            }
+            $scope.saveSession().then(function(versionNumber) {
                 if ($scope.status === 'saved') {
 
                     $scope.status = 'sending-back';
 
-                    SubtitleStorage.sendBackTask(response, $scope.getNotes()).then(function onSuccess(response) {
+                    SubtitleStorage.sendBackTask(versionNumber, $scope.getNotes()).then(function onSuccess(response) {
 
-                        $scope.$root.$emit('show-loading-modal', 'Subtitles saved, task sent back. Redirecting…');
+                        $scope.$root.$emit('show-loading-modal', message);
                         window.location = $scope.primaryVideoURL;
                         
                     }, function onError() {
@@ -161,30 +206,48 @@ var angular = angular || null;
             });
         };
         $scope.saveSession = function() {
+            // Save the current session
+            //
+            // Returns a promise that will be resolved with the version number
+            // of the new version when the save is complete.  If nothing has
+            // changed, then we don't save anything and return the current
+            // version number.
             if ($scope.status !== 'saving') {
-                $scope.status = 'saving';
+                var subtitleList = SubtitleListFinder.get('working-subtitle-set').scope;
+                var deferred = $q.defer();
 
-                var promise = SubtitleListFinder.get('working-subtitle-set').scope.saveSubtitles();
-
-                promise.then(function onSuccess(response) {
+                if($scope.changesMade) {
+                    // changes have been made, we need to save the subtitles
+                    $scope.status = 'saving';
+                    var promise = subtitleList.saveSubtitles();
+                    promise.then(function onSuccess(response) {
+                        $scope.status = 'saved';
+                        $scope.changesMade = false;
+                        deferred.resolve(response.data.version_number);
+                    }, function onError(e) {
+                        $scope.status = 'error';
+                        $scope.showErrorModal();
+                        deferred.reject(e);
+                    });
+                } else {
+                    // no changes made, just return the current version
                     $scope.status = 'saved';
-                }, function onError() {
-                    $scope.status = 'error';
-                    $scope.showErrorModal();
-                });
+                    deferred.resolve(subtitleList.versionNumber);
+                }
 
-                return promise;
+                return deferred.promise;
             }
         };
         $scope.setCloseStates = function() {
 
             var subtitleListScope = SubtitleListFinder.get('working-subtitle-set').scope;
 
-            $scope.fromOldEditor = window.location.search.indexOf('from-old-editor') !== -1 ? true : false;
+            var oldEditorURL = OldEditorConfig.get()
+            $scope.fromOldEditor = Boolean(oldEditorURL);
             $scope.primaryVideoURL = '/videos/' + subtitleListScope.videoID + '/';
 
             if ($scope.fromOldEditor) {
-                $scope.dialogURL = '/onsite_widget/?config=' + window.location.search.split('config=')[1];
+                $scope.dialogURL = oldEditorURL;
             }
         };
         $scope.showCloseModal = function() {
@@ -215,8 +278,16 @@ var angular = angular || null;
 
             }
 
+            if($scope.status === 'saved') {
+                var heading = 'Your changes have been saved.';
+            } else if($scope.changesMade) {
+                var heading = 'Your changes will be discarded.';
+            } else {
+                var heading = 'You are leaving the editor';
+            }
+
             $scope.$root.$emit('show-modal', {
-                heading: ($scope.status === 'saved' ? 'Your changes have been saved.' : 'Your changes will be discarded.'),
+                heading: heading,
                 buttons: buttons
             });
         };
@@ -243,9 +314,10 @@ var angular = angular || null;
         });
         $scope.$root.$on('subtitles-fetched', function() {
             $scope.setCloseStates();
+            $scope.changesMade = false;
         });
         $scope.$root.$on('work-done', function() {
-            $scope.canSave = '';
+            $scope.changesMade = true;
             $scope.$digest();
         });
 
@@ -294,27 +366,32 @@ var angular = angular || null;
 
             $scope.status = 'loading';
 
-            SubtitleStorage.getSubtitles(languageCode, versionNumber, function(subtitles) {
-                $scope.onSubtitlesFetched(subtitles);
+            var that = this;
+            SubtitleStorage.getSubtitles(languageCode, versionNumber, function(subtitleData) {
+                $scope.onSubtitlesFetched.call(that, subtitleData);
             });
 
         };
-        $scope.onSubtitlesFetched = function (subtitles) {
+        $scope.onSubtitlesFetched = function (subtitleData) {
 
-            // Save the title and description to this scope.
-            $scope.videoTitle = subtitles.title;
-            $scope.videoDescription = subtitles.description;
+            // Save subtitle data to this scope
+            $scope.versionNumber = subtitleData.version_no;
+            $scope.videoTitle = subtitleData.title;
+            $scope.videoDescription = subtitleData.description;
 
-            // Set up a new parser instance with this DFXP XML set.
-            this.dfxpWrapper = new root.AmaraDFXPParser();
-            this.dfxpWrapper.init(subtitles.subtitlesXML);
+            if ( subtitleData.visibility == 'Public' || $scope.isEditable){
+                // Set up a new parser instance with this DFXP XML set.
+               this.dfxpWrapper = new root.AmaraDFXPParser();
+               this.dfxpWrapper.init(subtitleData.subtitlesXML);
 
-            // Reference the parser and instance on the scope so we can access it via
-            // the templates.
-            $scope.parser = this.dfxpWrapper;
-            $scope.subtitles = $scope.parser.getSubtitles().get();
+                // Reference the parser and instance on the scope so we can access it via
+                // the templates.
+                $scope.parser = this.dfxpWrapper;
+                $scope.subtitles = $scope.parser.getSubtitles().get();
 
-            $scope.status = 'ready';
+                $scope.status = 'ready';
+            }
+
 
             // When we have subtitles for an editable set, broadcast it.
             $timeout(function() {
@@ -382,6 +459,10 @@ var angular = angular || null;
         $scope.empty = false;
         $scope.isEditing = false;
         $scope.showStartTime = $scope.parser.startTime($scope.subtitle) !== -1;
+        $scope.contentAsHTML = $scope.parser.contentRendered($scope.subtitle);
+        // convert to markdown at init time, then never again to avoid
+        // double scaping
+        initialText = $scope.parser.dfxpToMarkdown($scope.subtitle, true);
 
         $scope.finishEditingMode = function(newValue) {
 
@@ -390,9 +471,14 @@ var angular = angular || null;
             // Tell the root scope that we're no longer editing, now.
             $scope.$root.$emit('editing-done');
 
-            var content = $scope.parser.content($scope.subtitle, newValue);
 
-            if (content !== initialText) {
+            if (newValue !== initialText) {
+                // we can store markdown content directly on the node
+                // then on serialization it will get converted correctly
+                // to dfxp
+                $scope.parser.content($scope.subtitle, newValue);
+                $scope.contentAsHTML = $scope.parser.contentRendered($scope.subtitle);
+                initialText = $scope.parser.content($scope.subtitle);
                 $scope.$root.$emit('work-done');
             }
         };
@@ -401,7 +487,6 @@ var angular = angular || null;
         };
         $scope.startEditingMode = function() {
 
-            initialText = $scope.parser.content($scope.subtitle);
 
             $scope.isEditing = true;
 

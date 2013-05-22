@@ -371,7 +371,7 @@ class TestCaseDeleteLast(WebdriverTestCase):
         self.video_pg.open_video_page(self.video.video_id)
         available_langs = self.video_pg.subtitle_languages()
         self.logger.info(available_langs)
-        self.assertIn('English (in progress)', available_langs)
+        self.assertIn('English', available_langs)
 
 
 

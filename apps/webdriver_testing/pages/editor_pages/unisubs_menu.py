@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+import time
+
 from apps.webdriver_testing.pages import Page
 
 class UnisubsMenu(Page):
@@ -32,6 +34,16 @@ class UnisubsMenu(Page):
 
         """
         self.wait_for_element_present(self._MENU)
+        ## Giving loading message 10 seconds to update.
+        start_time = time.time()
+        while time.time() - start_time < 10:
+            time.sleep(.2)
+            menu_text = self.get_text_by_css(self._MENU)
+            if menu_text != 'Loading':
+                break
+        else:
+            self.record_error("> 10 seconds passed, and menu still loading")
+
         return self.get_text_by_css(self._MENU)
 
     def _available_languages(self):

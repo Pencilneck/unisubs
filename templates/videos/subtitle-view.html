@@ -153,9 +153,31 @@
                 {% if request.user|can_delete_language:language %}
                     <a class="button" href="{% url teams:delete-language video.get_team_video.team.slug language.pk %}">{% trans 'Delete Subtitle Language' %}</a>
                 {% endif %}
+
                 {% if language.is_original and request.user|can_create_subtitles_for:video or not language.is_original and request.user|can_create_translations_for:video %}
-                <a id="edit_subtitles_button" class="button{% if edit_disabled %} disabled" title="{% trans 'You do not have permission to edit this version' %}"{% else %}" href="{{edit_url}}"{% endif %}>{% trans 'Edit Subtitles' %}</a>
+                    {% if edit_disabled %}
+                        {% if must_use_tasks %}
+                            <a id="edit_subtitles_button"
+                               class="button disabled"
+                               title="{% trans 'You must use the tasks panel to work with this version.' %}">
+                                {% trans 'Edit Subtitles' %}
+                            </a>
+                        {% else %}
+                            <a id="edit_subtitles_button"
+                               class="button disabled"
+                               title="{% trans 'You do not have permission to edit this version.' %}">
+                                {% trans 'Edit Subtitles' %}
+                            </a>
+                        {% endif %}
+                    {% else %}
+                        <a id="edit_subtitles_button"
+                           class="button"
+                           href="{{ edit_url }}">
+                            {% trans 'Edit Subtitles' %}
+                        </a>
+                    {% endif %}
                 {% endif %}
+
                 {% if last_version.has_subtitles %}
                     <div class="sort_button action">
                         <div class='arrow'>
@@ -178,9 +200,9 @@
                     <p class="view-notice{% if not last_version.is_public %} draft{% endif %}">
                         {% if not last_version.is_public %}<em>{% trans 'Draft only' %}</em>{% endif %}
                         {% if language.get_translation_source_language_code %}
-                            {% trans "Subtitles" %}
-                            {% trans 'translated from' %}
-                            {{  language.get_translation_source_language_code|to_localized_display }}.
+                            {% blocktrans with language.get_translation_source_language_code|to_localized_display as language %}
+                            Subtitles translated from {{ language }}
+                            {% endblocktrans %}
                         {% endif %}
                         {% trans "Showing" %}
                         <strong>{% trans "Revision" %} {{ last_version.version_number }}</strong>,

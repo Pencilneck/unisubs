@@ -53,7 +53,7 @@ var angular = angular || null;
         var authHeaders = cachedData.authHeaders;
 
         return {
-            approveTask: function(response, notes) {
+            approveTask: function(versionNumber, notes) {
 
                 var url = getTaskSaveAPIUrl(cachedData.team_slug, cachedData.task_id);
 
@@ -64,7 +64,7 @@ var angular = angular || null;
                     data:  {
                         complete: true,
                         body: notes,
-                        version_number: response.data.version_number
+                        version_number: versionNumber,
                     }
                 });
 
@@ -113,7 +113,7 @@ var angular = angular || null;
                     throw Error('You must supply a language code to getSubtitles().');
                 }
 
-                var subtitles;
+                var subtitleData;
 
                 // Loop through all of our cached languages to find the correct subtitle version.
                 for (var i=0; i < cachedData.languages.length; i++){
@@ -128,8 +128,8 @@ var angular = angular || null;
                             // We've found the version.
                             if (language.versions[j].version_no === parseInt(versionNumber, 10)){
 
-                                subtitles = language.versions[j];
-                                if (subtitles.subtitlesXML) {
+                                subtitleData = language.versions[j];
+                                if (subtitleData.subtitlesXML) {
                                     break;
                                 }
 
@@ -141,8 +141,8 @@ var angular = angular || null;
                 }
 
                 // If we found subtitles, call the callback with them.
-                if (subtitles.subtitlesXML !== undefined){
-                   callback(subtitles);
+                if (subtitleData.subtitlesXML !== undefined){
+                   callback(subtitleData);
 
                 // Otherwise, ask the API for this version.
                 } else {
@@ -152,8 +152,8 @@ var angular = angular || null;
                     $http.get(url).success(function(response) {
 
                         // Cache these subtitles on the cached data object.
-                        subtitles.subtitlesXML = response;
-                        callback(subtitles);
+                        subtitleData.subtitlesXML = response;
+                        callback(subtitleData);
 
                     });
                 }
@@ -164,7 +164,7 @@ var angular = angular || null;
             getVideoURLs: function() {
                 return cachedData.video.videoURLs;
             },
-            sendBackTask: function(response, notes) {
+            sendBackTask: function(versionNumber, notes) {
 
                 var url = getTaskSaveAPIUrl(cachedData.team_slug, cachedData.task_id);
 
@@ -176,7 +176,7 @@ var angular = angular || null;
                         complete: true,
                         notes: notes,
                         send_back: true,
-                        version_number: response.data.version_number
+                        version_number: versionNumber,
                     }
                 });
 
@@ -244,4 +244,18 @@ var angular = angular || null;
         };
     });
 
-}).call(this);
+    module.factory('OldEditorConfig', function($window) {
+        /**
+         * A sevice to cache and retrieve instances of the subtitle-list directive.
+         *
+         * TODO: We don't really need this service. We can simply use angular.element to retrieve
+         * subtitle-list instances and access the scope / controller from there.
+         */
+        var oldEditorURL = window.editorData.oldEditorURL;
+
+        return {
+            get: function() {
+                return oldEditorURL;
+            }
+        };
+    });}).call(this);

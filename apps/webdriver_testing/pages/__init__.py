@@ -274,7 +274,7 @@ class Page(object):
             elem = self.browser.find_element_by_css_selector(element)
         except NoSuchElementException:
             return False
-        return True
+        return elem 
 
     def count_elements_present(self, element):
         """Return the number of elements (css) found on page.

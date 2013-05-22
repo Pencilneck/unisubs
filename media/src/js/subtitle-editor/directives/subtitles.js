@@ -25,13 +25,24 @@ var USER_IDLE_MINUTES = 5;
 
     var directives = angular.module('amara.SubtitleEditor.directives', []);
 
-    directives.directive('saveSessionButton', function(SubtitleStorage) {
-        return {
-            link: function link(scope, elm, attrs) {
-                scope.canSave = '';
+    function setCaretPosition(elem, caretPos) {
+        /** Move the caret to the specified position.
+         * This will work, except for text areas with user inserted line breaks
+         */
+        if (elem != null) {
+            if (elem.createTextRange) {
+                var range = elem.createTextRange();
+                range.move('character', caretPos);
+                range.select();
             }
-        };
-    });
+            else {
+                if (elem.selectionStart) {
+                    elem.focus();
+                    elem.setSelectionRange(caretPos, caretPos);
+                }
+            }
+        }
+    }
     directives.directive('subtitleEditor', function(SubtitleStorage, LockService, $timeout) {
 
         var minutesIdle = 0;
@@ -209,12 +220,17 @@ var USER_IDLE_MINUTES = 5;
             selectedScope,
             value;
 
-        function onSubtitleItemSelected(elm) {
+        function onSubtitleItemSelected(elm, event) {
             /**
              * Receives the li.subtitle-list-item to be edited.
              * Will put any previously edited ones in display mode,
              * mark this one as being edited, creating the textarea for
              * editing.
+             *
+             * If this is created by user interaction (clicking on the sub)
+             * we want to keep the caret focus on the place he's clicked. Else
+             * if this initiated by any other action (e.g. advancing the video
+             * playhead / tabbing through subs, we can ignore this).
              */
 
             elm = $(elm).hasClass('subtitle-list-item') ?
@@ -222,6 +238,10 @@ var USER_IDLE_MINUTES = 5;
 
             var controller = angular.element(elm).controller();
             var scope = angular.element(elm).scope();
+            // make sure we're actually changing the editing sub
+            if (scope == selectedScope && scope.isEditing){
+                return;
+            }
 
             if (controller instanceof SubtitleListItemController) {
                 if (selectedScope) {
@@ -231,13 +251,17 @@ var USER_IDLE_MINUTES = 5;
                 activeTextArea = $('textarea', elm);
                 selectedScope = scope;
 
-                activeTextArea.val(selectedScope.startEditingMode());
+                var textValue = selectedScope.startEditingMode()
+                activeTextArea.val(textValue);
+                var caretPos = (event && document.getSelection().extentOffset) ||
+                                textValue.length;
                 selectedScope.$digest();
 
                 activeTextArea.focus();
                 activeTextArea.autosize();
 
                 selectedScope.$root.$broadcast('subtitle-selected', selectedScope);
+                setCaretPosition($(activeTextArea).get(0), caretPos);
             }
         }
         function onSubtitleTextKeyDown(e) {
@@ -306,6 +330,16 @@ var USER_IDLE_MINUTES = 5;
 
             }
 
+            // enter without shift
+            if (e.keyCode === 13 && !e.shiftKey) {
+                e.preventDefault();
+                if (selectedScope && selectedScope.isEditing) {
+                    selectedScope.finishEditingMode(activeTextArea.val());
+                    selectedScope.$digest();
+                }
+
+            }
+
             if (nextSubtitle) {
 
                 // Select the next element.
@@ -337,16 +371,29 @@ var USER_IDLE_MINUTES = 5;
 
         }
 
+        function onSubtitleFocusOut(e) {
+            cancelEditing();
+        }
+
+        function cancelEditing() {
+            if (selectedScope && selectedScope.isEditing) {
+                selectedScope.finishEditingMode(activeTextArea.val());
+                selectedScope.$digest();
+            }
+        }
+
         return {
             compile: function compile(elm, attrs, transclude) {
                 rootEl = elm;
                 return {
                     post: function post(scope, elm, attrs) {
 
-                        scope.getSubtitles(attrs.languageCode, attrs.versionNumber);
-
+                        // set these *before* calling get subtitle since if
+                        // the subs are bootstrapped it will return right away
                         scope.isEditable = attrs.editable === 'true';
                         scope.canAddAndRemove = attrs.canAddAndRemove === 'true';
+                        scope.getSubtitles(attrs.languageCode, attrs.versionNumber);
+
 
                         // Cache the jQuery selection of the element.
                         var $elm = $(elm);
@@ -372,20 +419,18 @@ var USER_IDLE_MINUTES = 5;
 
                         if (scope.isEditable) {
                             $elm.click(function(e) {
-                                onSubtitleItemSelected(e.srcElement || e.target);
+                                onSubtitleItemSelected(e.srcElement || e.target, e);
                             });
                             $elm.on('keydown', 'textarea', onSubtitleTextKeyDown);
                             $elm.on('keyup', 'textarea', onSubtitleTextKeyUp);
+                            $elm.on('focusout', 'textarea', onSubtitleFocusOut);
 
                             // In order to catch an <esc> key sequence, we need to catch
                             // the keycode on the document, not the list. Also, keyup must
                             // be used instead of keydown.
                             $(document).on('keyup', function(e) {
                                 if (e.keyCode === 27) {
-                                    if (selectedScope) {
-                                        selectedScope.finishEditingMode(activeTextArea.val());
-                                        selectedScope.$digest();
-                                    }
+                                    cancelEditing();
                                 }
                             });
 
@@ -488,5 +533,23 @@ var USER_IDLE_MINUTES = 5;
             }
         };
     });
+    directives.directive('languageSelector', function(SubtitleStorage) {
 
+
+
+        return {
+            compile: function compile(elm, attrs, transclude) {
+                return {
+                    post: function post(scope, elm, attrs) {
+                        SubtitleStorage.getLanguages(function(languages){
+                            scope.setInitialDisplayLanguage(
+                                languages,
+                                attrs.initialLanguageCode,
+                                attrs.initialVersionNumber);
+                        });
+                    }
+                };
+            }
+        };
+    });
 })(window.AmarajQuery);

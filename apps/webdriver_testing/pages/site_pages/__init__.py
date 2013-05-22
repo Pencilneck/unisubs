@@ -26,6 +26,7 @@ class UnisubsPage(Page):
     _SITE_LOGIN_USER_PW = "input#id_password"
     _SITE_LOGIN_SUBMIT = "form button[value=login]"
 
+    _MESSAGE = "div#messages"
     _ERROR_MESSAGE = "div#messages h2.error"
     _SUCCESS_MESSAGE = "div#messages h2.success"
 
@@ -40,6 +41,7 @@ class UnisubsPage(Page):
 
     def success_message_present(self, message):
         self.logger.info('Check if success message present')
+        self.wait_for_element_present(self._MESSAGE, wait_time=15)
         if self.is_text_present(self._SUCCESS_MESSAGE, message):
             return True
 

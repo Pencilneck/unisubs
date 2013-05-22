@@ -21,6 +21,7 @@ from django.contrib.auth.decorators import login_required
 from videos.models import Video
 from teams.models import Task
 from subtitles.models import SubtitleLanguage, SubtitleVersion
+from subtitles.shims import get_widget_url
 from subtitles.templatetags.new_subtitles_tags import visibility_display
 
 from django.http import HttpResponse
@@ -139,17 +140,10 @@ def subtitle_editor(request, video_id, language_code, task_id=None):
 
     # if this language is a translation, show both
     editing_version = editing_language.get_tip(public=False)
-    translated_from_version = None
-    lineage = editing_version and editing_version.get_lineage()
-    translated_from_language_code = editing_language.get_translation_source_language_code()
-
-    if editing_version and translated_from_language_code and \
-        translated_from_language_code != editing_language.language_code :
-        translated_from_version = SubtitleVersion.objects.get(
-            subtitle_language__video=video,
-            subtitle_language__language_code=translated_from_language_code,
-            version_number=lineage.values()[0]
-        )
+    # we ignore forking because even if it *is* a fork, we still want to show
+    # the user the rererence languages:
+    translated_from_version = editing_language.\
+        get_translation_source_version(ignore_forking=True)
 
     languages = video.newsubtitlelanguage_set.having_nonempty_versions().annotate(
         num_versions=Count('subtitleversion'))
@@ -177,7 +171,9 @@ def subtitle_editor(request, video_id, language_code, task_id=None):
             'videoURLs': video_urls,
         },
         'languages': [_language_data(lang, editing_version, translated_from_version) for lang in languages],
-        'languageCode': request.LANGUAGE_CODE
+        'languageCode': request.LANGUAGE_CODE,
+        'oldEditorURL': get_widget_url(editing_language),
+        'savedNotes': request.GET.get('saved-notes', '')
     }
 
     task = task_id and Task.objects.get(pk=task_id)

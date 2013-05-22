@@ -25,3 +25,25 @@ describe('Test display time filter', function() {
             }));
     });
 });
+
+describe('Drop down shows the right labels', function() {
+    beforeEach(module('amara.SubtitleEditor.filters'));
+    describe('versionDropDownDisplay', function() {
+
+        var versionData = {
+            'version_no':1
+        };
+        it('Are we showing the right thing?',
+            inject(function(versionDropDownDisplayFilter) {
+                versionData.visibility = 'Public';
+                expect(versionDropDownDisplayFilter(versionData)).
+                    toBe('Version 1');
+                versionData.visibility = 'Private';
+                expect(versionDropDownDisplayFilter(versionData)).
+                    toBe('Version 1 (Private)');
+                versionData.visibility = 'Deleted';
+                expect(versionDropDownDisplayFilter(versionData)).
+                    toBe('Version 1 (Deleted)');
+            }));
+    });
+});

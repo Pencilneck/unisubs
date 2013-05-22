@@ -25,6 +25,8 @@ class TasksTab(ATeamPage):
     #CREATE TASK FORM
     _TASK_TYPE = 'select#id_type'
     _TASK_ASSIGNEE = 'div#id_assignee_chzn'
+    _TASK_LANGUAGE = 'div.language-selector div#id_language_chzn'
+    
     _TASK_SAVE = "div.submit button"
 
    #ERRORS
@@ -95,10 +97,14 @@ class TasksTab(ATeamPage):
         return self.get_text_by_css(self._FILTERED_VIDEO)
 
 
-    def add_task(self, task_type=None, task_assignee=None):
+    def add_task(self, task_type=None, task_assignee=None, task_language=None):
         self.click_by_css(self._ADD_TASK)
         if task_type:
             self.select_option_by_text(self._TASK_TYPE, task_type)
+        if task_language:
+            self.click_by_css(self._TASK_LANGUAGE)
+            el = self._TASK_LANGUAGE + ' div.chzn-search input' 
+            self.type_by_css(el, task_language + '\n')
         if task_assignee:
             self.select_from_chosen(self._TASK_ASSIGNEE, task_assignee)
         
