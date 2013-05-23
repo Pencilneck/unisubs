@@ -102,7 +102,10 @@ unisubs.player.WistiaVideoPlayer.prototype.onWistiaAPIReady = function(videoId, 
     }
     this.player_['bind']('timechange', function(t){that.onPlayerTimeChanged(t);});
     // init the player correctly else play pause states will be weird
-    this.player_['play']() && this.player_['pause']();
+    // UPDATE: This was causing poster issues on the page load, disabling this
+    // fixes the issues, and it's not clear that this is still necessary: 
+    // play/pause states do not appear problematic now.
+    // this.player_['play']() && this.player_['pause']();
 };
 
 unisubs.player.WistiaVideoPlayer.prototype.onPlayerTimeChanged = function(newTime) {
