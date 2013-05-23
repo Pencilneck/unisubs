@@ -45,7 +45,7 @@ unisubs.Dialog = function(videoSource) {
     this.idleTimer_.start();
     this.minutesIdle_ = 0;
     this.ignoreLock_ = unisubs.mode === 'review';
-    this.ignoreLock_ = true;
+//    this.ignoreLock_ = true;
     this.forceSave_ = false;
 };
 
